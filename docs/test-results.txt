@@ -1,0 +1,55 @@
+test_quiet_backing_microphone_coloration_positive_and_negative (test_core.AlignmentTests.test_quiet_backing_microphone_coloration_positive_and_negative) ... ok
+test_unrelated_and_silent_audio (test_core.AlignmentTests.test_unrelated_and_silent_audio) ... ok
+test_all_effects_and_limiter (test_core.MediaTests.test_all_effects_and_limiter) ... ok
+test_compression_reduces_above_threshold_signal (test_core.MediaTests.test_compression_reduces_above_threshold_signal) ... ok
+test_cut_stays_in_sync_when_video_starts_after_audio (test_core.MediaTests.test_cut_stays_in_sync_when_video_starts_after_audio) ... ok
+test_effects_do_not_touch_backing_track (test_core.MediaTests.test_effects_do_not_touch_backing_track) ... ok
+test_eq_attenuates_selected_frequency (test_core.MediaTests.test_eq_attenuates_selected_frequency) ... ok
+test_export_protects_sources_and_cancellation (test_core.MediaTests.test_export_protects_sources_and_cancellation) ... ok
+test_nonoverlapping_backing_is_silent (test_core.MediaTests.test_nonoverlapping_backing_is_silent) ... ok
+test_reverb_produces_stereo_tail_after_predelay (test_core.MediaTests.test_reverb_produces_stereo_tail_after_predelay) ... ok
+test_room_response_predelay_and_decay (test_core.MediaTests.test_room_response_predelay_and_decay) ... ok
+test_shift_mix_and_gain (test_core.MediaTests.test_shift_mix_and_gain) ... ok
+test_synchronized_middle_delete_mp4_wav_mp3 (test_core.MediaTests.test_synchronized_middle_delete_mp4_wav_mp3) ... ok
+test_variable_frame_rate_video_exports_constant_rate (test_core.MediaTests.test_variable_frame_rate_video_exports_constant_rate) ... ok
+test_edit_save_load_roundtrip (test_core.ProjectTests.test_edit_save_load_roundtrip) ... ok
+test_invalid_project_rejected (test_core.ProjectTests.test_invalid_project_rejected) ... ok
+QStandardPaths: XDG_RUNTIME_DIR not set, defaulting to '/tmp/runtime-agent'
+test_branding_icon_and_splash_work_in_a_packaged_resource_directory (test_ui.UITests.test_branding_icon_and_splash_work_in_a_packaged_resource_directory) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_edit_panel_collapsed_by_default_and_summarizes_cuts (test_ui.UITests.test_edit_panel_collapsed_by_default_and_summarizes_cuts) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_effect_folding_never_changes_audio_and_switch_keeps_parameters (test_ui.UITests.test_effect_folding_never_changes_audio_and_switch_keeps_parameters) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_eq_spinbox_steps_up_and_down (test_ui.UITests.test_eq_spinbox_steps_up_and_down) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_import_settings_preview_edit_save_reload (test_ui.UITests.test_import_settings_preview_edit_save_reload) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_invalid_trim_does_not_destroy_clips (test_ui.UITests.test_invalid_trim_does_not_destroy_clips) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_new_import_defaults_off_and_original_presets_keep_their_behavior (test_ui.UITests.test_new_import_defaults_off_and_original_presets_keep_their_behavior) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_open_existing_project_restores_enabled_effects_and_values (test_ui.UITests.test_open_existing_project_restores_enabled_effects_and_values) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_preset_keeps_master_limiter (test_ui.UITests.test_preset_keeps_master_limiter) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_reimport_longer_video_updates_trim_endpoint (test_ui.UITests.test_reimport_longer_video_updates_trim_endpoint) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+test_startup_splash_hands_off_to_main_window (test_ui.UITests.test_startup_splash_hands_off_to_main_window) ... defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+defaultServiceProvider::requestService(): no service found for - "org.qt-project.qt.mediaplayer"
+ok
+
+----------------------------------------------------------------------
+Ran 27 tests in 11.497s
+
+OK
