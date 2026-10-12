@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from saxstudio.branding import SPLASH_SIZE, splash_pixmap  # noqa: E402
+from saxstudio.branding import BOOT_PROGRESS, SPLASH_SIZE, splash_pixmap  # noqa: E402
 from saxstudio.qt import QtWidgets  # noqa: E402
 
 
@@ -17,7 +17,7 @@ def main():
     output = Path(sys.argv[1] if len(sys.argv) > 1 else "build/splash/boot-splash.png")
     output.parent.mkdir(parents=True, exist_ok=True)
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    image = splash_pixmap(*SPLASH_SIZE, progress=.08, message="正在啟動…")
+    image = splash_pixmap(*SPLASH_SIZE, progress=BOOT_PROGRESS, message="正在啟動…")
     if not image.save(str(output)):
         raise SystemExit(f"could not write {output}")
     print(output)

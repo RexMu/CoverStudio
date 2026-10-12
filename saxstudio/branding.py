@@ -14,6 +14,7 @@ APP_ID = "SaxCoverStudio.Desktop"
 # Physical pixel size shared by the PyInstaller boot image and the Qt splash,
 # so the hand-off between them does not jump in size or position.
 SPLASH_SIZE = (720, 405)  # PyInstaller boot splash allows at most 760x480
+BOOT_PROGRESS = .1
 
 
 def asset_path(name):
@@ -46,54 +47,42 @@ def dark_palette():
     return palette
 
 
-def paint_splash(painter, width, height, progress=0.0, message="正在啟動…"):
-    """Draw the splash text layer on a logical 960x540 canvas scaled to size."""
+def paint_splash(painter, width, height, progress=0.1, message="正在啟動…"):
+    """Draw the splash text layer on a logical 720x405 canvas scaled to size.
+
+    Positions and sizes follow the approved 720x405 mockup (baselines in px).
+    """
     painter.save()
-    painter.scale(width/960, height/540)
+    painter.scale(width/720, height/405)
     painter.setRenderHint(QtGui.QPainter.Antialiasing)
-    font = QtGui.QFont("Segoe UI")
-    font.setPixelSize(10)
-    font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 2)
-    painter.setFont(font)
-    painter.setPen(QtGui.QColor("#75ded5"))
-    painter.drawText(54, 158, "YOUR SAX. YOUR COVER.")
-    font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 0)
-    font.setPixelSize(49)
-    font.setBold(True)
-    painter.setFont(font)
-    painter.setPen(QtGui.QColor("#e6eff8"))
-    painter.drawText(52, 214, "Sax Cover")
-    painter.setPen(QtGui.QColor("#32cec5"))
-    painter.drawText(52, 266, "Studio")
-    font.setPixelSize(15)
-    font.setBold(False)
-    painter.setFont(font)
-    painter.setPen(QtGui.QColor("#b7cadb"))
-    painter.drawText(54, 307, "為你的演奏，調出好聲音。")
-    font.setPixelSize(12)
-    font.setBold(True)
-    painter.setFont(font)
-    painter.setPen(QtGui.QColor("#32cec5"))
-    painter.drawText(54, 340, VERSION_LABEL)
+    painter.setRenderHint(QtGui.QPainter.TextAntialiasing)
+
+    def text(x, y, value, size, color, bold=False, spacing=0.0):
+        font = QtGui.QFont("Segoe UI")
+        font.setPixelSize(size)
+        font.setBold(bold)
+        font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, spacing)
+        painter.setFont(font)
+        painter.setPen(QtGui.QColor(color))
+        painter.drawText(QtCore.QPointF(x, y), value)
+
+    text(40, 108, "YOUR SAX. YOUR COVER.", 11, "#75ded5", spacing=1.5)
+    text(38, 158, "Sax Cover", 46, "#e6eff8", bold=True)
+    text(38, 205, "Studio", 46, "#32cec5", bold=True)
+    text(40, 244, "為你的演奏，調出好聲音。", 16, "#b7cadb")
+    text(40, 274, VERSION_LABEL, 13, "#32cec5", bold=True)
     painter.setPen(QtCore.Qt.NoPen)
     painter.setBrush(QtGui.QColor("#203849"))
-    painter.drawRoundedRect(QtCore.QRectF(54, 455, 226, 3), 1.5, 1.5)
+    painter.drawRoundedRect(QtCore.QRectF(40, 330, 220, 4), 2, 2)
     painter.setBrush(QtGui.QColor("#32cec5"))
-    fill = 226 * max(.04, min(1.0, progress))
-    painter.drawRoundedRect(QtCore.QRectF(54, 455, fill, 3), 1.5, 1.5)
-    font.setPixelSize(11)
-    font.setBold(False)
-    painter.setFont(font)
-    painter.setPen(QtGui.QColor("#91a8bd"))
-    painter.drawText(54, 477, message)
-    font.setPixelSize(9)
-    painter.setFont(font)
-    painter.setPen(QtGui.QColor("#718ea3"))
-    painter.drawText(54, 515, f"本機影音混音工作室  ·  {AUTHOR}")
+    fill = 220 * max(.04, min(1.0, progress))
+    painter.drawRoundedRect(QtCore.QRectF(40, 330, fill, 4), 2, 2)
+    text(40, 359, message, 14, "#91a8bd")
+    text(40, 387, f"本機影音混音工作室  ·  {AUTHOR}", 12, "#96acc0")
     painter.restore()
 
 
-def splash_pixmap(width, height, progress=0.0, message="正在啟動…", with_text=True):
+def splash_pixmap(width, height, progress=0.1, message="正在啟動…", with_text=True):
     canvas = QtGui.QPixmap(width, height)
     canvas.fill(QtGui.QColor("#0b1724"))
     art = QtGui.QPixmap(str(asset_path("splash-art.png")))
@@ -116,13 +105,18 @@ class StartupSplash(QtWidgets.QSplashScreen):
         width = min(SPLASH_SIZE[0]/ratio, bounds.width()*.8, bounds.height()*.8*16/9)
         width = max(320, round(width))
         height = round(width*9/16)
-        self.progress, self.message = 0.0, "正在啟動…"
+        # Same state as the boot image so the hand-off looks like one screen.
+        self.progress, self.message = BOOT_PROGRESS, "正在啟動…"
         canvas = splash_pixmap(round(width*ratio), round(height*ratio), with_text=False)
         canvas.setDevicePixelRatio(ratio)
         super().__init__(canvas, QtCore.Qt.WindowStaysOnTopHint)
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(icon or application_icon())
         self.setAccessibleName(f"{APP_NAME} 啟動畫面")
+        # Center on the primary screen like the bootloader splash does; Qt would
+        # otherwise pick the screen under the mouse on multi-monitor setups.
+        if screen:
+            self.move(screen.geometry().center() - self.rect().center())
 
     def set_progress(self, progress, message):
         self.progress, self.message = progress, message

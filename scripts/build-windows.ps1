@@ -35,9 +35,11 @@ if ($SaxSplashArgs.Count -eq 0) {
 }
 $SaxAssets = Join-Path $PWD 'assets'
 $SaxIcon = Join-Path $SaxAssets 'app-icon.ico'
+# Per-monitor DPI awareness from process start keeps the boot splash centered.
+$SaxManifest = Join-Path $PWD 'installer\dpi-aware.manifest'
 & $SaxPython -m PyInstaller --noconfirm --clean --windowed --name SaxCoverStudio `
     --add-binary "$SaxFfmpeg;tools" --add-binary "$SaxFfprobe;tools" `
-    --icon $SaxIcon --add-data "$SaxAssets;assets" @SaxSplashArgs `
+    --icon $SaxIcon --manifest $SaxManifest --add-data "$SaxAssets;assets" @SaxSplashArgs `
     --add-data 'THIRD_PARTY.md;.' `
     --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets run.py
 if ($LASTEXITCODE -ne 0) { throw '桌面程式打包失敗。' }
