@@ -107,6 +107,25 @@ def decode_mono(path, rate=8000, duration=None, cancel=None):
     return samples
 
 
+def active_range(path, rate=8000, threshold_db=-40.0, cancel=None):
+    """First/last moment the track is audibly playing, in seconds.
+
+    Leading/trailing digital silence and the inaudible end of a fade-out are
+    ignored: a 10 ms window counts as playing when its peak is within
+    `threshold_db` of the track's loudest peak.
+    """
+    x = decode_mono(path, rate=rate, cancel=cancel)
+    window = max(1, rate // 100)
+    padded = np.pad(np.abs(x), (0, (-len(x)) % window))
+    peaks = padded.reshape(-1, window).max(axis=1)
+    loudest = float(peaks.max(initial=0))
+    if loudest < 1e-4:
+        raise ValueError("伴奏幾乎沒有聲音")
+    threshold = max(loudest * 10 ** (threshold_db / 20), 1e-3)
+    playing = np.flatnonzero(peaks >= threshold)
+    return float(playing[0] * window / rate), float(min(len(x), (playing[-1] + 1) * window) / rate)
+
+
 def waveform(path, cancel=None):
     # 1 kHz is enough for a display envelope; alignment decodes independently.
     x = decode_mono(path, rate=1000, cancel=cancel)

@@ -1,8 +1,11 @@
-#define AppVersion "0.1.2"
+#define AppVersion "0.2"
 [Setup]
 AppId={{5F1C5C9C-BCF7-49D7-9208-F14D2072C61A}
 AppName=Sax Cover Studio
 AppVersion={#AppVersion}
+AppVerName=Sax Cover Studio Beta V{#AppVersion}
+AppPublisher=Rex Mu | RexFactory
+VersionInfoVersion=0.2.0.0
 DefaultDirName={localappdata}\Programs\Sax Cover Studio
 DefaultGroupName=Sax Cover Studio
 PrivilegesRequired=lowest
@@ -10,7 +13,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.22000
 OutputDir=..\dist\installer
-OutputBaseFilename=SaxCoverStudio-Setup-{#AppVersion}
+OutputBaseFilename=SaxCoverStudio-Setup-BetaV{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

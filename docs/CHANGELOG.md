@@ -1,3 +1,26 @@
+# Sax Cover Studio Beta V0.2
+
+以 0.1.2 為基礎。
+
+## 新增與修改
+
+- 版本號改為 Beta V0.2（`saxstudio/__init__.py` 的 `__version__`），作者 Rex Mu | RexFactory；顯示於標題列、主畫面、啟動畫面、「關於」視窗；安裝程式加上 AppVerName／AppPublisher，輸出 `SaxCoverStudio-Setup-BetaV0.2.exe`。
+- 啟動流程改由 `saxstudio/launcher.py` 執行：先顯示開頭畫面，再分段載入 NumPy／SciPy、建立主畫面、檢查 FFmpeg，並在畫面上顯示進度。打包時用 `scripts/make-boot-splash.py` 產生同樣的開頭畫面圖，交給 PyInstaller `--splash`，雙擊 EXE 後立即顯示。啟動失敗時顯示錯誤詳情，不會卡在開頭畫面。
+- 效果區／影片區／音訊條改為可拖曳的分隔線（QSplitter），記住大小；新增「重設版面」。影片預覽最小尺寸縮小為 240×135。
+- EQ 改為與 Comp／Revb 相同的折疊卡片，新專案預設關閉；快速音色會開啟 EQ。
+- EQ／Comp／Revb 加上 ⓘ 說明小卡（`saxstudio/help_text.py`）。
+- 快速音色改為按鈕列（`PresetBar`，保留 `currentIndex`／`setCurrentIndex` 介面），新增「↶ 還原套用前設定」。
+- 依伴奏自動裁剪：`media.active_range()` 偵測伴奏有聲範圍（相對最大峰值 −40 dB），`Project.trim_to_backing()` 保留前後秒數並限制在影片範圍內。
+- 數字欄上下按鈕加上箭頭圖示（`assets/spin-*.png`，含 @2x）。
+- `Alignment.reliable` 屬性取代原本內嵌的可信度判斷（門檻不變）。
+
+## 相容性
+
+- `.saxproj` 格式不變。舊專案的 EQ 開關依專案儲存的狀態還原。
+- 引擎（`engine.py`）與匯出流程未修改。
+
+---
+
 # Sax Cover Studio 0.1.2
 
 本版本以使用者上傳的 `SaxStudio-0.1.1-source.zip` 為基礎，使用已確認的戴耳機薩克斯風角色。

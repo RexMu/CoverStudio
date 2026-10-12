@@ -1,4 +1,4 @@
-from saxstudio.app import main
+from saxstudio.launcher import main
 
 if __name__ == "__main__":
     main()

@@ -14,6 +14,10 @@ class Alignment:
     agreement: float
     message: str
 
+    @property
+    def reliable(self):
+        return self.confidence >= .32 and self.agreement >= .025
+
 
 def features(x, rate=8000, hop=256):
     if len(x) < 1024 or np.sqrt(np.mean(x * x)) < 1e-6:
@@ -73,9 +77,9 @@ def align_samples(video, backing, rate=8000, max_shift=90.0):
         peak = abs(window[k]) / max(1e-12, np.linalg.norm(x)*np.linalg.norm(y))
         if peak > .1:
             offset = (shift + k-radius) / rate
-    reliable = confidence >= .32 and agreement >= .025
-    message = "比對清楚，請播放前奏核對" if reliable else "可信度偏低；請核對前奏並手動微調"
-    return Alignment(offset, confidence, agreement, message)
+    result = Alignment(offset, confidence, agreement, "")
+    result.message = "比對清楚，請播放前奏核對" if result.reliable else "可信度偏低；請核對前奏並手動微調"
+    return result
 
 
 def align_files(video, backing, seconds=90, cancel=None):

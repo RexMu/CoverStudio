@@ -1,5 +1,5 @@
 """Presentation-only controls for the existing effect settings."""
-from .qt import QtCore, QtGui, QtWidgets
+from .qt import QtCore, QtGui, QtWidgets, Signal
 
 
 class ToggleSwitch(QtWidgets.QCheckBox):
@@ -32,8 +32,98 @@ class ToggleSwitch(QtWidgets.QCheckBox):
             painter.drawRoundedRect(QtCore.QRectF(.5, .5, 37, 23), 10, 10)
 
 
+class InfoButton(QtWidgets.QToolButton):
+    """Small circled "i" that opens a click-away help card."""
+
+    def __init__(self, title, html, parent=None):
+        super().__init__(parent)
+        self.title, self.html = title, html
+        self.popup = None
+        self.setObjectName("info")
+        self.setText("i")
+        self.setFixedSize(20, 20)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip(f"{title} 參數說明")
+        self.setAccessibleName(f"{title} 參數說明")
+        self.clicked.connect(self.show_popup)
+
+    def show_popup(self):
+        popup = QtWidgets.QFrame(self.window(), QtCore.Qt.Popup)
+        popup.setObjectName("infoPopup")
+        popup.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+        layout = QtWidgets.QVBoxLayout(popup)
+        layout.setContentsMargins(14, 12, 14, 12)
+        text = QtWidgets.QLabel(f"<b style='font-size:14px'>{self.title}</b>{self.html}")
+        text.setObjectName("infoText")
+        text.setWordWrap(True)
+        text.setTextFormat(QtCore.Qt.RichText)
+        text.setFixedWidth(380)
+        layout.addWidget(text)
+        popup.adjustSize()
+        position = self.mapToGlobal(QtCore.QPoint(0, self.height() + 4))
+        screen = QtWidgets.QApplication.screenAt(position) or QtWidgets.QApplication.primaryScreen()
+        if screen:
+            area = screen.availableGeometry()
+            position.setX(max(area.left(), min(position.x(), area.right() - popup.width())))
+            if position.y() + popup.height() > area.bottom():
+                position.setY(self.mapToGlobal(QtCore.QPoint(0, 0)).y() - popup.height() - 4)
+        popup.move(position)
+        popup.show()
+        self.popup = popup
+
+
+class PresetBar(QtWidgets.QWidget):
+    """Quick tone buttons with the small QComboBox-like API the window uses.
+
+    Index 0 means "自訂" (no preset button lit); 1..n map to the buttons.
+    """
+    currentIndexChanged = Signal(int)
+
+    def __init__(self, presets, parent=None):
+        super().__init__(parent)
+        self._index = 0
+        self.buttons = []
+        row = QtWidgets.QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        for i, (name, tip) in enumerate(presets, 1):
+            b = QtWidgets.QPushButton(name)
+            b.setObjectName("preset")
+            b.setCheckable(True)
+            b.setToolTip(tip)
+            b.setCursor(QtCore.Qt.PointingHandCursor)
+            b.clicked.connect(lambda checked=False, i=i: self.setCurrentIndex(i))
+            row.addWidget(b)
+            self.buttons.append(b)
+        self.custom = QtWidgets.QLabel("自訂")
+        self.custom.setObjectName("presetCustom")
+        self.custom.setToolTip("手動調整任何參數後，會變成自訂設定")
+        row.addWidget(self.custom)
+        row.addStretch()
+        self._sync()
+
+    def count(self):
+        return len(self.buttons) + 1
+
+    def currentIndex(self):
+        return self._index
+
+    def setCurrentIndex(self, index):
+        index = max(0, min(int(index), len(self.buttons)))
+        changed = index != self._index
+        self._index = index
+        self._sync()
+        if changed:
+            self.currentIndexChanged.emit(index)
+
+    def _sync(self):
+        for i, b in enumerate(self.buttons, 1):
+            b.setChecked(i == self._index)
+        self.custom.setEnabled(self._index == 0)
+
+
 class CollapsibleEffect(QtWidgets.QFrame):
-    def __init__(self, name, parent=None):
+    def __init__(self, name, parent=None, info=None):
         super().__init__(parent)
         self.setObjectName("card")
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Maximum)
@@ -52,7 +142,14 @@ class CollapsibleEffect(QtWidgets.QFrame):
         self.title = QtWidgets.QLabel(name)
         self.title.setStyleSheet("font-size: 14px; font-weight: 600;")
         self.status = QtWidgets.QLabel("未啟用")
-        labels.addWidget(self.title)
+        title_row = QtWidgets.QHBoxLayout()
+        title_row.setSpacing(6)
+        title_row.addWidget(self.title)
+        self.info = InfoButton(name, info) if info else None
+        if self.info:
+            title_row.addWidget(self.info)
+        title_row.addStretch()
+        labels.addLayout(title_row)
         labels.addWidget(self.status)
         row.addLayout(labels)
         row.addStretch()

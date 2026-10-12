@@ -20,11 +20,24 @@ if ($LASTEXITCODE -ne 0) { throw '套件安裝失敗。' }
 if ($LASTEXITCODE -ne 0) { throw '功能測試失敗，停止打包。' }
 $SaxFfmpeg = Join-Path $PWD 'tools\ffmpeg.exe'
 $SaxFfprobe = Join-Path $PWD 'tools\ffprobe.exe'
+# Boot splash: shown by the PyInstaller bootloader the moment the EXE starts,
+# before Python/Qt load. Needs Tcl/Tk (included in the python.org installer).
+$SaxBootSplash = Join-Path $PWD 'build\splash\boot-splash.png'
+$SaxSplashArgs = @()
+$SaxHasTk = $false
+try { & $SaxPython -c "import tkinter" *> $null; $SaxHasTk = ($LASTEXITCODE -eq 0) } catch { $SaxHasTk = $false }
+if ($SaxHasTk) {
+    & $SaxPython scripts\make-boot-splash.py $SaxBootSplash
+    if ($LASTEXITCODE -eq 0) { $SaxSplashArgs = @('--splash', $SaxBootSplash) }
+}
+if ($SaxSplashArgs.Count -eq 0) {
+    Write-Warning '找不到 Tcl/Tk，EXE 將沒有「雙擊立即顯示」的開機畫面。請以 python.org 安裝程式勾選 tcl/tk 後重新建置。'
+}
 $SaxAssets = Join-Path $PWD 'assets'
 $SaxIcon = Join-Path $SaxAssets 'app-icon.ico'
 & $SaxPython -m PyInstaller --noconfirm --clean --windowed --name SaxCoverStudio `
     --add-binary "$SaxFfmpeg;tools" --add-binary "$SaxFfprobe;tools" `
-    --icon $SaxIcon --add-data "$SaxAssets;assets" `
+    --icon $SaxIcon --add-data "$SaxAssets;assets" @SaxSplashArgs `
     --add-data 'THIRD_PARTY.md;.' `
     --hidden-import PySide6.QtMultimedia --hidden-import PySide6.QtMultimediaWidgets run.py
 if ($LASTEXITCODE -ne 0) { throw '桌面程式打包失敗。' }
@@ -44,5 +57,5 @@ if ($Installer) {
         & $SaxIsccPath installer\SaxCoverStudio.iss
     }
     if ($LASTEXITCODE -ne 0) { throw '安裝檔建置失敗。' }
-    Write-Host '安裝檔：dist\installer\SaxCoverStudio-Setup-0.1.2.exe'
+    Write-Host '安裝檔：dist\installer\SaxCoverStudio-Setup-BetaV0.2.exe'
 }

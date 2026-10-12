@@ -1,5 +1,7 @@
 import os
 import copy
+import numpy as np
+from scipy.io import wavfile
 import tempfile
 import time
 import unittest
@@ -29,6 +31,12 @@ class UITests(unittest.TestCase):
                  f"testsrc2=size=160x90:rate=30:duration={seconds}", "-f", "lavfi", "-i",
                  f"sine=frequency=440:duration={seconds}", "-c:v", "libx264", "-threads", "2",
                  "-c:a", "aac", "-shortest", str(path)])
+        # 1 s silence, 1 s tone, 2 s silence: audible backing range is 1.0-2.0 s.
+        rate = 48000
+        tone = np.zeros(rate*4, np.float32)
+        tone[rate:2*rate] = .3*np.sin(2*np.pi*660*np.arange(rate)/rate)
+        cls.padded_backing = cls.root/"前後靜音伴奏.wav"
+        wavfile.write(cls.padded_backing, rate, tone)
         cls.backing = cls.root/"伴奏.wav"
         run([binary("ffmpeg"), "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=880:duration=4",
              str(cls.backing)])
@@ -159,6 +167,7 @@ class UITests(unittest.TestCase):
 
     def test_eq_spinbox_steps_up_and_down(self):
         self.import_video()
+        self.window.eq_toggle.setChecked(True)
         field = self.window.bands[1][1]
         field.stepUp()
         self.assertEqual(self.window.project.effects.bands[1].gain, .5)
@@ -198,9 +207,11 @@ class UITests(unittest.TestCase):
     def test_new_import_defaults_off_and_original_presets_keep_their_behavior(self):
         self.import_video()
         w = self.window
+        self.assertFalse(w.project.effects.eq_enabled)
         self.assertFalse(w.project.effects.compressor_enabled)
         self.assertFalse(w.project.effects.reverb_enabled)
         w.preset.setCurrentIndex(2)
+        self.assertTrue(w.project.effects.eq_enabled)
         self.assertTrue(w.project.effects.compressor_enabled)
         self.assertTrue(w.project.effects.reverb_enabled)
         for panel in w.effect_sections.values():
@@ -213,6 +224,7 @@ class UITests(unittest.TestCase):
     def test_open_existing_project_restores_enabled_effects_and_values(self):
         self.import_video()
         project = copy.deepcopy(self.window.project)
+        project.effects.eq_enabled = True
         project.effects.compressor_enabled = True
         project.effects.reverb_enabled = True
         project.effects.threshold = -27
@@ -257,6 +269,7 @@ class UITests(unittest.TestCase):
 from unittest.mock import patch
 from tempfile import TemporaryDirectory
 from saxstudio import app as program
+from saxstudio import media
 from saxstudio.branding import StartupSplash
 from saxstudio.qt import QtWidgets, QtCore
 observed = {'shown': False, 'finished': False}
@@ -282,13 +295,129 @@ class TestApplication(original):
 with TemporaryDirectory() as config:
     QtCore.QSettings.setDefaultFormat(QtCore.QSettings.IniFormat)
     QtCore.QSettings.setPath(QtCore.QSettings.IniFormat, QtCore.QSettings.UserScope, config)
-    with patch.object(QtWidgets, 'QApplication', TestApplication), patch.object(program, 'check_ffmpeg', return_value=[]), patch.object(StartupSplash, 'show', shown), patch.object(StartupSplash, 'finish', finished):
+    with patch.object(QtWidgets, 'QApplication', TestApplication), patch.object(media, 'check_ffmpeg', return_value=[]), patch.object(StartupSplash, 'show', shown), patch.object(StartupSplash, 'finish', finished):
         program.main()
 '''
         result = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parent.parent,
                                 capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
         self.assertIn("startup lifecycle OK", result.stdout)
+
+    def import_backing(self, path=None):
+        with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(path or self.backing), "")):
+            self.window.import_backing()
+        self.wait_job()
+
+    def test_auto_trim_keeps_backing_span_plus_margins_and_undoes(self):
+        self.import_video()
+        w = self.window
+        self.assertFalse(w.autotrim_button.isEnabled())
+        self.import_backing(self.padded_backing)
+        self.assertTrue(w.autotrim_button.isEnabled())
+        start, end = w.backing_range
+        self.assertAlmostEqual(start, 1.0, delta=.02)
+        self.assertAlmostEqual(end, 2.0, delta=.02)
+        w.offset.setValue(500)
+        w.pre_roll.setValue(1)
+        w.post_roll.setValue(.5)
+        w.auto_trim()
+        self.assertEqual(len(w.project.clips), 1)
+        self.assertAlmostEqual(w.project.clips[0].start, .5, delta=.03)
+        self.assertAlmostEqual(w.project.clips[0].end, 3.0, delta=.03)
+        self.assertFalse(w.edits_body.isHidden())
+        w.undo()
+        self.assertEqual(w.project.clips, [Clip(0, 4)])
+        # Low-confidence alignment asks first; declining leaves clips alone.
+        w.alignment_reliable = False
+        with patch.object(QtWidgets.QMessageBox, "question", return_value=QtWidgets.QMessageBox.No):
+            w.auto_trim()
+        self.assertEqual(w.project.clips, [Clip(0, 4)])
+        # Margins are clamped to the video.
+        w.alignment_reliable = None
+        w.pre_roll.setValue(3)
+        w.post_roll.setValue(2)
+        w.auto_trim()
+        self.assertAlmostEqual(w.project.clips[0].start, 0, delta=.001)
+        self.assertAlmostEqual(w.project.clips[0].end, 4, delta=.001)
+
+    def test_preset_buttons_and_restore_previous_settings(self):
+        self.import_video()
+        w = self.window
+        self.assertEqual(w.preset.currentIndex(), 0)
+        self.assertFalse(w.preset_undo.isEnabled())
+        w.eq_toggle.setChecked(True)
+        w.bands[0][1].setValue(-4)
+        w.preset.buttons[1].click()
+        self.assertEqual(w.preset.currentIndex(), 2)
+        self.assertTrue(w.preset.buttons[1].isChecked())
+        self.assertEqual(w.project.effects.bands[0].gain, 1)
+        w.preset.buttons[2].click()
+        self.assertEqual(w.project.effects.bands[0].gain, -1)
+        self.assertFalse(w.preset.buttons[1].isChecked())
+        w.undo_preset()
+        self.assertEqual(w.project.effects.bands[0].gain, -4)
+        self.assertTrue(w.project.effects.eq_enabled)
+        self.assertEqual(w.preset.currentIndex(), 0)
+        self.assertFalse(w.preset_undo.isEnabled())
+        # A manual edit lights "自訂" again.
+        w.preset.buttons[0].click()
+        w.bands[2][1].setValue(2)
+        self.assertEqual(w.preset.currentIndex(), 0)
+        self.assertFalse(any(b.isChecked() for b in w.preset.buttons))
+
+    def test_eq_is_a_collapsible_switch_card_and_help_popups_open(self):
+        self.import_video()
+        w = self.window
+        eq = w.effect_sections["eq_enabled"]
+        self.assertIs(eq.toggle, w.eq_toggle)
+        self.assertTrue(eq.body.isHidden())
+        self.assertFalse(eq.body.isEnabled())
+        eq.toggle.click()
+        self.assertTrue(w.project.effects.eq_enabled)
+        self.assertTrue(eq.body.isEnabled())
+        for key, word in [("eq_enabled", "高通"), ("compressor_enabled", "門檻"), ("reverb_enabled", "預延遲")]:
+            info = w.effect_sections[key].info
+            self.assertIsNotNone(info)
+            before = copy.deepcopy(w.project)
+            info.click()
+            self.app.processEvents()
+            self.assertTrue(info.popup.isVisible())
+            self.assertIn(word, info.popup.findChild(QtWidgets.QLabel).text())
+            info.popup.close()
+            self.assertEqual(w.project, before)
+
+    def test_resizable_layout_saves_and_resets(self):
+        w = self.window
+        self.assertEqual(w.h_split.count(), 2)
+        self.assertEqual(w.v_split.count(), 2)
+        self.assertFalse(w.h_split.childrenCollapsible())
+        w.resize(1440, 980)
+        self.app.processEvents()
+        w.save_layout()
+        settings = QtCore.QSettings("SaxStudio", "SaxStudio")
+        self.assertIsNotNone(settings.value("ui/h_split"))
+        w.reset_layout()
+        self.assertIsNone(QtCore.QSettings("SaxStudio", "SaxStudio").value("ui/h_split"))
+        left, right = w.h_split.sizes()
+        self.assertGreater(left, right)
+
+    def test_version_author_and_spin_arrow_assets(self):
+        from saxstudio import AUTHOR, VERSION_LABEL
+        from saxstudio.app import style_sheet
+        from saxstudio.branding import StartupSplash, asset_path
+        self.assertEqual(VERSION_LABEL, "Beta V0.2")
+        self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
+        self.assertIn("Beta V0.2", self.window.windowTitle())
+        sheet = style_sheet()
+        self.assertNotIn("@UP@", sheet)
+        for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):
+            self.assertTrue(asset_path(name).is_file())
+            self.assertIn(asset_path(name).as_posix(), sheet)
+        splash = StartupSplash()
+        splash.set_progress(.5, "正在建立主畫面…")
+        self.assertEqual(splash.message, "正在建立主畫面…")
+        self.assertFalse(splash.grab().isNull())
+        splash.close()
 
 
 if __name__ == "__main__":

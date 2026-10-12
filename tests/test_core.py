@@ -11,7 +11,7 @@ from scipy.io import wavfile
 
 from saxstudio.alignment import align_samples
 from saxstudio.engine import LIMIT, export, impulse, render_mix
-from saxstudio.media import Cancelled, binary, decode_mono, probe, run
+from saxstudio.media import Cancelled, active_range, binary, decode_mono, probe, run
 from saxstudio.model import Clip, Project
 
 
@@ -51,6 +51,38 @@ class ProjectTests(unittest.TestCase):
             path.write_text("{broken")
             with self.assertRaises(ValueError):
                 Project.load(path)
+
+
+class AutoTrimTests(unittest.TestCase):
+    def test_trim_to_backing_keeps_margins_and_clamps(self):
+        p = Project(duration=60, clips=[Clip(0, 10), Clip(20, 60)], offset=5)
+        self.assertEqual(p.trim_to_backing(2, 40, 3, 2), (4, 47))
+        self.assertEqual(p.clips, [Clip(4, 47)])
+        self.assertEqual(p.trim_to_backing(0, 70, 3, 2), (2, 60))
+        p.offset = -1
+        self.assertEqual(p.trim_to_backing(.5, 10, 3, 2), (0, 11))
+        p.offset = 100
+        with self.assertRaises(ValueError):
+            p.trim_to_backing(0, 10)
+
+    def test_active_range_ignores_silence_and_inaudible_fade(self):
+        rate = 8000
+        t = np.arange(rate*6)/rate
+        x = np.zeros_like(t)
+        body = (t >= 1.5) & (t < 4)
+        x[body] = .5*np.sin(2*np.pi*220*t[body])
+        fade = (t >= 4) & (t < 5.5)
+        # Fade-out from 0 dB down to -60 dB; audible (> -40 dB) until ~5.0 s.
+        x[fade] = .5*np.sin(2*np.pi*220*t[fade])*10**(-60*(t[fade]-4)/1.5/20)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/"伴奏.wav"
+            wavfile.write(path, rate, x.astype(np.float32))
+            start, end = active_range(path)
+            self.assertAlmostEqual(start, 1.5, delta=.02)
+            self.assertAlmostEqual(end, 5.0, delta=.03)
+            wavfile.write(path, rate, np.zeros(rate, np.float32))
+            with self.assertRaises(ValueError):
+                active_range(path)
 
 
 class AlignmentTests(unittest.TestCase):

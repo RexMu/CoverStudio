@@ -15,7 +15,7 @@ class EQBand:
 
 @dataclass
 class Effects:
-    eq_enabled: bool = True
+    eq_enabled: bool = False
     bands: list[EQBand] = field(default_factory=lambda: [
         EQBand(100), EQBand(350), EQBand(2500), EQBand(8000)])
     highpass: float = 60.0
@@ -96,6 +96,22 @@ class Project:
                       if min(c.end, end) - max(c.start, start) >= .001]
         if not self.clips:
             raise ValueError("範圍內沒有可保留片段")
+
+    def trim_to_backing(self, start, end, before=3.0, after=2.0):
+        """Keep only the performance: `before` seconds ahead of the audible
+        backing start to `after` seconds past its audible end.
+
+        `start`/`end` are in backing-track time; `offset` maps them onto the
+        video timeline. Replaces all existing clips and returns the kept range.
+        """
+        if end <= start:
+            raise ValueError("伴奏有聲範圍不正確")
+        keep_start = max(0.0, self.offset + start - before)
+        keep_end = min(self.duration, self.offset + end + after)
+        if keep_end - keep_start < .05:
+            raise ValueError("伴奏不在影片的時間範圍內，請先確認伴奏對齊")
+        self.clips = [Clip(keep_start, keep_end)]
+        return keep_start, keep_end
 
     def save(self, path):
         self.validate()

@@ -7,12 +7,13 @@ from pathlib import Path
 
 import numpy as np
 
-from . import __version__
-from .branding import APP_NAME, StartupSplash, application_icon, set_windows_identity
-from .effect_panels import CollapsibleEffect
+from . import AUTHOR, VERSION_LABEL, __version__
+from .branding import APP_NAME, application_icon, asset_path, dark_palette
+from .effect_panels import CollapsibleEffect, PresetBar
+from .help_text import COMP_HELP, EQ_HELP, PRESETS, REVB_HELP
 from .alignment import align_files
 from .engine import audio_origin, export, render_mix
-from .media import check_ffmpeg, decode_mono, probe, thumbnail, waveform
+from .media import active_range, decode_mono, probe, thumbnail, waveform
 from .model import Clip, Effects, Project
 from .qt import QT6, QtCore, QtGui, QtMultimedia, QtWidgets as W, QtMultimediaWidgets, player, source, state_stopped
 from .widgets import EQGraph, Timeline, Worker
@@ -37,6 +38,25 @@ QPushButton#primary:hover { background: #41d0ca; }
 QPushButton#danger { color: #ffb5ac; }
 QPushButton:checked { background: #31546b; border-color: #32d4ce; }
 QDoubleSpinBox, QSpinBox, QComboBox { background: #101d2b; border: 1px solid #3c526b; border-radius: 4px; padding: 2px 4px; min-height: 22px; }
+QDoubleSpinBox, QSpinBox { padding-right: 18px; }
+QDoubleSpinBox::up-button, QSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 17px; border-left: 1px solid #3c526b; border-top-right-radius: 4px; background: #1a2b3c; }
+QDoubleSpinBox::down-button, QSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 17px; border-left: 1px solid #3c526b; border-top: 1px solid #2c3f53; border-bottom-right-radius: 4px; background: #1a2b3c; }
+QDoubleSpinBox::up-button:hover, QSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover, QSpinBox::down-button:hover { background: #2a4054; }
+QDoubleSpinBox::up-button:pressed, QSpinBox::up-button:pressed, QDoubleSpinBox::down-button:pressed, QSpinBox::down-button:pressed { background: #31546b; }
+QDoubleSpinBox::up-arrow, QSpinBox::up-arrow { image: url("@UP@"); width: 9px; height: 6px; }
+QDoubleSpinBox::up-arrow:disabled, QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off, QSpinBox::up-arrow:off { image: url("@UPD@"); }
+QDoubleSpinBox::down-arrow, QSpinBox::down-arrow { image: url("@DOWN@"); width: 9px; height: 6px; }
+QDoubleSpinBox::down-arrow:disabled, QSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off, QSpinBox::down-arrow:off { image: url("@DOWND@"); }
+QToolButton#info { background: transparent; color: #8fb4cc; border: 1px solid #56738b; border-radius: 10px; font-weight: 700; font-size: 11px; }
+QToolButton#info:hover { color: #0b2a30; background: #32d4ce; border-color: #32d4ce; }
+QFrame#infoPopup { background: #1b2e40; border: 1px solid #43657e; border-radius: 8px; }
+QLabel#infoText { color: #dbe7f2; font-size: 12px; }
+QPushButton#preset { padding: 6px 12px; border-radius: 14px; }
+QPushButton#preset:checked { background: #24bdb9; color: #082b32; border-color: #24bdb9; font-weight: 700; }
+QLabel#presetCustom { color: #617386; padding: 0 6px; }
+QLabel#presetCustom:enabled { color: #e9b853; font-weight: 600; }
+QSplitter::handle { background: #1c2b3a; }
+QSplitter::handle:hover { background: #2ac5bf; }
 QToolButton#section { background: transparent; border: none; font-weight: 600; padding: 4px 2px; text-align: left; }
 QToolButton#section:hover { color: #32d4ce; }
 QWidget#effectHead, QWidget#effectBody { background: transparent; }
@@ -61,6 +81,15 @@ QToolTip { background: #253d51; color: #eff7ff; border: 1px solid #527084; }
 """
 
 
+def style_sheet():
+    """STYLE with absolute arrow-image paths (works from source and the EXE)."""
+    sheet = STYLE
+    for token, name in (("@UP@", "spin-up.png"), ("@UPD@", "spin-up-disabled.png"),
+                        ("@DOWN@", "spin-down.png"), ("@DOWND@", "spin-down-disabled.png")):
+        sheet = sheet.replace(token, asset_path(name).as_posix())
+    return sheet
+
+
 def button(text, callback, primary=False):
     b = W.QPushButton(text)
     b.clicked.connect(callback)
@@ -79,15 +108,12 @@ def spin(lo, hi, value, decimals=1, suffix=""):
     return s
 
 
-def dark_palette():
-    palette = QtGui.QPalette()
-    roles = QtGui.QPalette.ColorRole if QT6 else QtGui.QPalette
-    for role, color in [("Window", "#101923"), ("WindowText", "#e5edf7"), ("Base", "#101d2b"),
-                        ("AlternateBase", "#182635"), ("Text", "#e5edf7"), ("Button", "#24384c"),
-                        ("ButtonText", "#e5edf7"), ("Highlight", "#28646a"), ("HighlightedText", "#ffffff"),
-                        ("ToolTipBase", "#253d51"), ("ToolTipText", "#eff7ff")]:
-        palette.setColor(getattr(roles, role), QtGui.QColor(color))
-    return palette
+def backing_range(path, cancel=None):
+    """Audible span of the backing track, or None when it is silent."""
+    try:
+        return active_range(path, cancel=cancel)
+    except ValueError:
+        return None
 
 
 def clock(seconds):
@@ -115,14 +141,16 @@ class MainWindow(W.QMainWindow):
         self.preview_peaks = np.array([])
         self.pending_play = False
         self.video_failed = False
+        self.backing_range = None
+        self.alignment_reliable = None
         self.pending_since = 0.0
         self.last_resync = 0.0
         self.settings = QtCore.QSettings("SaxStudio", "SaxStudio")
-        self.setWindowTitle(f"{APP_NAME} {__version__}")
+        self.setWindowTitle(f"{APP_NAME} {VERSION_LABEL}")
         self.setWindowIcon(application_icon())
         self.resize(1440, 980)
         self.setMinimumSize(1120, 800)
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(style_sheet())
         self.build_ui()
         self.video_player = player(self, self.video_widget, muted=True)
         self.audio_player = player(self)
@@ -158,6 +186,10 @@ class MainWindow(W.QMainWindow):
         label = W.QLabel("薩克斯風影片混音工作室  ·  本機處理")
         label.setObjectName("muted")
         header.addWidget(label)
+        version = W.QLabel(f"{VERSION_LABEL}  ·  {AUTHOR}")
+        version.setObjectName("version")
+        version.setStyleSheet("color: #32d4ce; font-size: 12px; font-weight: 600; padding-left: 8px;")
+        header.addWidget(version)
         header.addStretch()
         self.export_button = button("匯出影片 / 音訊", self.export_dialog, True)
         header.addWidget(self.export_button)
@@ -171,12 +203,15 @@ class MainWindow(W.QMainWindow):
         self.project_label = W.QLabel("尚未匯入影片")
         self.project_label.setObjectName("muted")
         toolbar.addWidget(self.project_label, 1)
+        reset_layout = button("重設版面", self.reset_layout)
+        reset_layout.setToolTip("把效果區、影片區與音訊條恢復為預設大小")
+        toolbar.addWidget(reset_layout)
+        toolbar.addWidget(button("關於", self.show_about))
         layout.addLayout(toolbar)
         self.controls = W.QWidget()
         controls_layout = W.QVBoxLayout(self.controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(10)
-        upper = W.QHBoxLayout()
         fx_area = W.QWidget()
         fx_layout = W.QVBoxLayout(fx_area)
         fx_layout.setContentsMargins(0, 0, 0, 0)
@@ -187,16 +222,28 @@ class MainWindow(W.QMainWindow):
         fx_title.setToolTip("EQ、壓縮、混響只處理影片原音；匯入的伴奏不會套用這些效果")
         fx_header.addWidget(fx_title)
         fx_header.addStretch()
-        self.preset = W.QComboBox()
-        self.preset.addItems(["自訂", "自然乾聲", "溫暖薩克斯風", "明亮獨奏", "柔和空間"])
-        self.preset.currentIndexChanged.connect(self.apply_preset)
-        fx_header.addWidget(self.preset)
         fx_layout.addLayout(fx_header)
-        eq_box = W.QGroupBox("參數 EQ")
-        eq_layout = W.QVBoxLayout(eq_box)
+        preset_row = W.QHBoxLayout()
+        preset_label = W.QLabel("快速音色")
+        preset_label.setObjectName("muted")
+        preset_row.addWidget(preset_label)
+        self.preset = PresetBar(PRESETS)
+        self.preset.currentIndexChanged.connect(self.apply_preset)
+        preset_row.addWidget(self.preset, 1)
+        self.preset_undo = button("↶ 還原套用前設定", self.undo_preset)
+        self.preset_undo.setToolTip("回到套用快速音色之前的效果設定")
+        self.preset_undo.setEnabled(False)
+        preset_row.addWidget(self.preset_undo)
+        fx_layout.addLayout(preset_row)
+        self.preset_backup = None
+        self.preset_chain = False
+        self.effect_sections = {}
+        eq_section = CollapsibleEffect("EQ 等化器", info=EQ_HELP)
+        self.effect_sections["eq_enabled"] = eq_section
+        self.eq_toggle = eq_section.toggle
+        eq_layout = W.QVBoxLayout()
+        eq_section.grid.addLayout(eq_layout, 0, 0)
         eq_top = W.QHBoxLayout()
-        self.eq_toggle = W.QCheckBox("啟用 EQ")
-        eq_top.addWidget(self.eq_toggle)
         eq_top.addStretch()
         eq_top.addWidget(W.QLabel("高通"))
         self.highpass = spin(0, 400, 60, 0, " Hz")
@@ -220,23 +267,22 @@ class MainWindow(W.QMainWindow):
                 field.valueChanged.connect(self.change_effects)
         eq_content.addLayout(eq_table)
         eq_layout.addLayout(eq_content)
-        fx_layout.addWidget(eq_box)
+        fx_layout.addWidget(eq_section)
         effects_row = W.QHBoxLayout()
         effects_row.setAlignment(QtCore.Qt.AlignTop)
         self.fx_fields = {}
-        self.effect_sections = {}
-        for name, enabled_name, params in [
-            ("Comp 壓縮", "compressor_enabled", [
+        for name, enabled_name, info, params in [
+            ("Comp 壓縮", "compressor_enabled", COMP_HELP, [
                 ("threshold", "門檻", -60, 0, -18, " dB"),
                 ("ratio", "比例", 1, 20, 3, " : 1"),
                 ("attack", "啟動", .1, 200, 15, " ms"),
                 ("release", "釋放", 10, 2000, 120, " ms"),
                 ("makeup", "補償", 0, 24, 0, " dB")]),
-            ("Revb 混響", "reverb_enabled", [
+            ("Revb 混響", "reverb_enabled", REVB_HELP, [
                 ("mix", "乾濕 Mix", 0, 100, 18, " %"),
                 ("decay", "衰減 RT60", .2, 5, 1.6, " s"),
                 ("predelay", "預延遲", 0, 150, 20, " ms")])]:
-            group = CollapsibleEffect(name)
+            group = CollapsibleEffect(name, info=info)
             self.effect_sections[enabled_name] = group
             grid = group.grid
             toggle = group.toggle
@@ -260,18 +306,27 @@ class MainWindow(W.QMainWindow):
         note.setObjectName("muted")
         note.setWordWrap(True)
         fx_layout.addWidget(note)
+        fx_layout.addStretch()
         scroll = W.QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(fx_area)
-        upper.addWidget(scroll, 6)
-        right = W.QVBoxLayout()
+        scroll.setMinimumWidth(460)
+        self.h_split = W.QSplitter(QtCore.Qt.Horizontal)
+        self.h_split.setChildrenCollapsible(False)
+        self.h_split.setHandleWidth(6)
+        self.h_split.addWidget(scroll)
+        right_widget = W.QWidget()
+        right_widget.setMinimumWidth(300)
+        right = W.QVBoxLayout(right_widget)
+        right.setContentsMargins(0, 0, 0, 0)
         self.video_stack = W.QStackedWidget()
         self.video_empty = W.QLabel("影片預覽\n\n匯入演奏影片後，可在此核對聲畫")
         self.video_empty.setAlignment(QtCore.Qt.AlignCenter)
         self.video_empty.setObjectName("muted")
         self.video_empty.setStyleSheet("background: #0b121c; color: #8498ae; border: 1px solid #304359; border-radius: 8px;")
         self.video_widget = QtMultimediaWidgets.QVideoWidget()
-        self.video_widget.setMinimumSize(340, 190)
+        self.video_widget.setMinimumSize(240, 135)
+        self.video_stack.setMinimumSize(240, 135)
         self.video_stack.addWidget(self.video_empty)
         self.video_stack.addWidget(self.video_widget)
         right.addWidget(self.video_stack, 1)
@@ -312,6 +367,17 @@ class MainWindow(W.QMainWindow):
         for b in [button("保留起訖範圍", self.trim), button("分割", self.split), button("刪除片段", self.delete_clip)]:
             edit_buttons.addWidget(b)
         edits_layout.addLayout(edit_buttons)
+        auto_row = W.QHBoxLayout()
+        auto_row.addWidget(W.QLabel("自動裁剪保留：伴奏前"))
+        self.pre_roll = spin(0, 30, self.float_setting("edit/pre_roll", 3.0), 1, " s")
+        auto_row.addWidget(self.pre_roll)
+        auto_row.addWidget(W.QLabel("伴奏後"))
+        self.post_roll = spin(0, 30, self.float_setting("edit/post_roll", 2.0), 1, " s")
+        auto_row.addWidget(self.post_roll)
+        auto_row.addStretch()
+        self.pre_roll.valueChanged.connect(lambda v: self.settings.setValue("edit/pre_roll", v))
+        self.post_roll.valueChanged.connect(lambda v: self.settings.setValue("edit/post_roll", v))
+        edits_layout.addLayout(auto_row)
         self.clip_list = W.QListWidget()
         self.clip_list.setMaximumHeight(95)
         self.clip_list.currentRowChanged.connect(self.select_clip)
@@ -324,11 +390,27 @@ class MainWindow(W.QMainWindow):
         undo_row.addWidget(self.duration_label)
         edits_layout.addLayout(undo_row)
         right.addWidget(edits)
-        upper.addLayout(right, 5)
-        controls_layout.addLayout(upper, 1)
+        self.h_split.addWidget(right_widget)
+        self.h_split.setStretchFactor(0, 3)
+        self.h_split.setStretchFactor(1, 2)
+        lower_widget = W.QWidget()
+        lower = W.QVBoxLayout(lower_widget)
+        lower.setContentsMargins(0, 6, 0, 0)
+        lower.setSpacing(10)
+        self.v_split = W.QSplitter(QtCore.Qt.Vertical)
+        self.v_split.setChildrenCollapsible(False)
+        self.v_split.setHandleWidth(6)
+        self.v_split.addWidget(self.h_split)
+        self.v_split.addWidget(lower_widget)
+        self.v_split.setStretchFactor(0, 3)
+        self.v_split.setStretchFactor(1, 1)
+        controls_layout.addWidget(self.v_split, 1)
         align_row = W.QHBoxLayout()
         self.align_button = button("自動對齊前奏", self.align)
         align_row.addWidget(self.align_button)
+        self.autotrim_button = button("依伴奏自動裁剪", self.auto_trim)
+        self.autotrim_button.setToolTip("以伴奏實際有聲音的範圍為準，保留伴奏開始前與結束後的設定秒數，其餘剪掉（可復原）")
+        align_row.addWidget(self.autotrim_button)
         self.align_label = W.QLabel("匯入伴奏後可比對前 90 秒")
         self.align_label.setObjectName("muted")
         align_row.addWidget(self.align_label, 1)
@@ -338,7 +420,7 @@ class MainWindow(W.QMainWindow):
         self.offset.setMinimumWidth(145)
         self.offset.valueChanged.connect(self.change_mix)
         align_row.addWidget(self.offset)
-        controls_layout.addLayout(align_row)
+        lower.addLayout(align_row)
         tracks = W.QHBoxLayout()
         track_controls = W.QVBoxLayout()
         track_controls.setContentsMargins(0, 28, 0, 6)
@@ -383,7 +465,7 @@ class MainWindow(W.QMainWindow):
         self.timeline.seek.connect(self.seek)
         self.timeline.select.connect(self.clip_list.setCurrentRow)
         tracks.addWidget(self.timeline, 1)
-        controls_layout.addLayout(tracks)
+        lower.addLayout(tracks, 1)
         layout.addWidget(self.controls, 1)
         transport = W.QHBoxLayout()
         self.play_button = button("▶ 播放", self.toggle_play, True)
@@ -422,6 +504,46 @@ class MainWindow(W.QMainWindow):
         expanded = expanded if isinstance(expanded, bool) else str(expanded).lower() == "true"
         self.edits_toggle.setChecked(expanded)
         self.set_edits_expanded(expanded)
+        self.restore_layout()
+        self.h_split.splitterMoved.connect(lambda *a: self.save_layout())
+        self.v_split.splitterMoved.connect(lambda *a: self.save_layout())
+
+    DEFAULT_SPLIT = ([900, 520], [600, 300])
+
+    def float_setting(self, key, default):
+        try:
+            return float(self.settings.value(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def restore_layout(self):
+        restored = False
+        for name, split in (("ui/h_split", self.h_split), ("ui/v_split", self.v_split)):
+            state = self.settings.value(name)
+            if state is not None and split.restoreState(state):
+                restored = True
+        if not restored:
+            self.h_split.setSizes(self.DEFAULT_SPLIT[0])
+            self.v_split.setSizes(self.DEFAULT_SPLIT[1])
+
+    def save_layout(self):
+        self.settings.setValue("ui/h_split", self.h_split.saveState())
+        self.settings.setValue("ui/v_split", self.v_split.saveState())
+
+    def reset_layout(self):
+        self.settings.remove("ui/h_split")
+        self.settings.remove("ui/v_split")
+        width = max(1, self.h_split.width())
+        height = max(1, self.v_split.height())
+        self.h_split.setSizes([round(width*.64), round(width*.36)])
+        self.v_split.setSizes([round(height*.67), round(height*.33)])
+
+    def show_about(self):
+        W.QMessageBox.about(self, f"關於 {APP_NAME}", (
+            f"<h3>{APP_NAME}</h3>"
+            f"<p><b>版本：</b>{VERSION_LABEL}<br><b>作者：</b>{AUTHOR}</p>"
+            "<p>薩克斯風翻奏影片／伴奏混音工作室。所有影音處理都在本機執行。</p>"
+            "<p style='color:#91a4b9'>使用 Qt (PySide6)、NumPy、SciPy 與 FFmpeg；授權資訊見隨附的 THIRD_PARTY.md。</p>"))
 
     def set_edits_expanded(self, expanded, remember=True):
         self.edits_body.setVisible(expanded)
@@ -478,6 +600,7 @@ class MainWindow(W.QMainWindow):
             setattr(fx, key, widget.isChecked() if key.endswith("enabled") else
                     widget.value()/100 if key == "mix" else widget.value())
         fx.limiter_enabled = self.limiter.isChecked()
+        self.preset_chain = False
         self.loading = True
         self.preset.setCurrentIndex(0)
         self.loading = False
@@ -487,7 +610,10 @@ class MainWindow(W.QMainWindow):
     def change_mix(self, *args):
         if self.loading:
             return
-        self.project.offset = self.offset.value()/1000
+        offset = self.offset.value()/1000
+        if abs(offset - self.project.offset) > 1e-9:
+            self.alignment_reliable = None
+        self.project.offset = offset
         self.project.video_db, self.project.backing_db = [f.value() for f, _ in self.volume_fields]
         self.project.video_muted, self.project.backing_muted = [m.isChecked() for _, m in self.volume_fields]
         self.timeline.update()
@@ -496,10 +622,11 @@ class MainWindow(W.QMainWindow):
     def apply_preset(self, index):
         if self.loading or index == 0:
             return
+        backup = copy.deepcopy(self.project.effects)
         fx = Effects()
-        # Keep the original tone presets' processing choices; only new projects
-        # start with Comp/Revb bypassed. Loading a project restores its own flags.
-        fx.compressor_enabled = fx.reverb_enabled = index != 1
+        # Tone presets switch their effects on; only new projects start with
+        # EQ/Comp/Revb bypassed. Loading a project restores its own flags.
+        fx.eq_enabled = fx.compressor_enabled = fx.reverb_enabled = index != 1
         # Presets change the first-track tone only; keep the master limiter choice.
         fx.limiter_enabled = self.project.effects.limiter_enabled
         if index == 1:
@@ -515,11 +642,28 @@ class MainWindow(W.QMainWindow):
             fx.mix, fx.decay = .25, 2.3
             fx.bands[-1].gain = -2
         self.project.effects = fx
+        if not self.preset_chain or self.preset_backup is None or self.preset_backup[0] is not self.project:
+            # Keep the settings from before the first of consecutive preset
+            # clicks, so trying several presets still returns to the user's own
+            # values; a manual edit in between starts a new chain.
+            self.preset_backup = (self.project, backup)
+        self.preset_chain = True
         self.load_controls()
         self.loading = True
         self.preset.setCurrentIndex(index)
         self.loading = False
+        self.preset_undo.setEnabled(True)
         self.mark_dirty(audio=True)
+
+    def undo_preset(self):
+        if self.busy or not self.preset_backup or self.preset_backup[0] is not self.project:
+            return
+        self.project.effects = copy.deepcopy(self.preset_backup[1])
+        self.preset_backup = None
+        self.preset_undo.setEnabled(False)
+        self.load_controls()
+        self.mark_dirty(audio=True)
+        self.statusBar().showMessage("已還原套用快速音色之前的設定")
 
     def mark_dirty(self, audio=False):
         self.dirty = True
@@ -527,7 +671,7 @@ class MainWindow(W.QMainWindow):
             self.pause()
             self.preview_dirty = True
             self.preview_label.setText("音效已變更 · 按播放更新")
-        self.setWindowTitle(f"{APP_NAME} {__version__} · 未儲存")
+        self.setWindowTitle(f"{APP_NAME} {VERSION_LABEL} · 未儲存")
 
     def launch(self, function, callback):
         if self.busy:
@@ -603,6 +747,10 @@ class MainWindow(W.QMainWindow):
         def done(result):
             info, wave, still = result
             self.project = Project(video=path, duration=info["duration"], clips=[Clip(0, info["duration"])])
+            self.backing_range = None
+            self.alignment_reliable = None
+            self.preset_backup = None
+            self.preset_undo.setEnabled(False)
             self.project_path = None
             self.undo_stack.clear()
             self.timeline.video_wave = wave
@@ -627,9 +775,11 @@ class MainWindow(W.QMainWindow):
             info = probe(path, cancel)
             if not info["audio"]:
                 raise ValueError("伴奏檔案没有音訊")
-            return info, waveform(path, cancel)
+            return info, waveform(path, cancel), backing_range(path, cancel)
         def done(result):
-            info, wave = result
+            info, wave, audible = result
+            self.backing_range = audible
+            self.alignment_reliable = None
             self.project.backing, self.project.offset = path, 0
             self.timeline.back_wave = wave
             self.timeline.back_duration = info["duration"]
@@ -637,6 +787,7 @@ class MainWindow(W.QMainWindow):
             self.mark_dirty(audio=True)
             self.align_label.setText("尚未對齊 · 請按自動對齊前奏")
             self.statusBar().showMessage("伴奏已匯入")
+            self.refresh()
         self.launch(task, done)
 
     def load_media(self, still=None):
@@ -672,8 +823,10 @@ class MainWindow(W.QMainWindow):
             return result
         def done(result):
             self.offset.setValue(result.offset*1000)
+            self.alignment_reliable = result.reliable
             self.align_label.setText(f"可信度 {result.confidence:.0%} · {result.message}")
-            self.statusBar().showMessage("位移已套用；請播放前奏核對，長影片也請核對結尾")
+            hint = "；可按「依伴奏自動裁剪」保留演奏範圍" if self.backing_range else ""
+            self.statusBar().showMessage("位移已套用；請播放前奏核對，長影片也請核對結尾" + hint)
         self.launch(task, done)
 
     def prepare_preview(self, autoplay=False):
@@ -826,6 +979,35 @@ class MainWindow(W.QMainWindow):
         self.undo_stack.append(copy.deepcopy(self.project.clips))
         self.undo_stack = self.undo_stack[-100:]
 
+    def auto_trim(self):
+        if self.busy or not self.project.video or not self.project.backing:
+            return
+        if not self.backing_range:
+            self.show_error("伴奏沒有偵測到有聲音的範圍，無法自動裁剪")
+            return
+        if self.alignment_reliable is False:
+            answer = W.QMessageBox.question(
+                self, "自動裁剪", "自動對齊的可信度偏低，伴奏位移可能不準。\n仍要依目前的位移裁剪嗎？（之後可按「復原剪輯」撤回）",
+                W.QMessageBox.Yes | W.QMessageBox.No, W.QMessageBox.No)
+            if answer != W.QMessageBox.Yes:
+                return
+        snapshot = copy.deepcopy(self.project.clips)
+        try:
+            start, end = self.project.trim_to_backing(*self.backing_range, self.pre_roll.value(), self.post_roll.value())
+        except ValueError as exc:
+            self.project.clips = snapshot
+            self.show_error(str(exc))
+            return
+        self.pause()
+        self.undo_stack.append(snapshot)
+        self.mark_start.setValue(start)
+        self.mark_end.setValue(end)
+        self.set_edits_expanded(True, remember=False)
+        self.mark_dirty()
+        self.refresh()
+        self.seek(start)
+        self.statusBar().showMessage(f"已自動裁剪：保留 {clock(start)} → {clock(end)}（伴奏前 {self.pre_roll.value():g} 秒、後 {self.post_roll.value():g} 秒）")
+
     def trim(self):
         if not self.project.video or self.busy:
             return
@@ -891,6 +1073,7 @@ class MainWindow(W.QMainWindow):
         self.import_video_button.setEnabled(not self.busy)
         self.import_back_button.setEnabled(has and not self.busy)
         self.align_button.setEnabled(bool(self.project.backing) and not self.busy)
+        self.autotrim_button.setEnabled(bool(self.project.backing) and bool(self.backing_range) and not self.busy)
         self.export_button.setEnabled(has and bool(self.project.clips) and not self.busy)
         self.play_button.setEnabled(has and bool(self.project.clips) and not self.busy)
         self.limiter.setEnabled(not self.busy)
@@ -929,7 +1112,7 @@ class MainWindow(W.QMainWindow):
             self.project.save(path)
             self.project_path = path
             self.dirty = False
-            self.setWindowTitle(f"{APP_NAME} {__version__} · {Path(path).name}")
+            self.setWindowTitle(f"{APP_NAME} {VERSION_LABEL} · {Path(path).name}")
             self.statusBar().showMessage("專案已儲存（原始影音檔請保留於原位置）")
         except Exception as exc:
             self.show_error(str(exc))
@@ -957,13 +1140,18 @@ class MainWindow(W.QMainWindow):
             vwave = waveform(p.video, cancel)
             still = Path(self.temp.name)/"project-still.jpg"
             thumbnail(p.video, still, cancel)
-            bwave, bd = np.array([]), 0
+            bwave, bd, audible = np.array([]), 0, None
             if p.backing:
                 bd = probe(p.backing, cancel)["duration"]
                 bwave = waveform(p.backing, cancel)
-            return p, vwave, bwave, bd, str(still)
+                audible = backing_range(p.backing, cancel)
+            return p, vwave, bwave, bd, str(still), audible
         def done(result):
-            self.project, self.timeline.video_wave, self.timeline.back_wave, self.timeline.back_duration, still = result
+            (self.project, self.timeline.video_wave, self.timeline.back_wave,
+             self.timeline.back_duration, still, self.backing_range) = result
+            self.alignment_reliable = None
+            self.preset_backup = None
+            self.preset_undo.setEnabled(False)
             self.project_path = path
             self.undo_stack.clear()
             self.load_media(still)
@@ -971,7 +1159,7 @@ class MainWindow(W.QMainWindow):
             self.dirty = False
             self.preview_label.setText("按播放建立音效預覽")
             self.align_label.setText("已讀取儲存的位移 · 請播放核對")
-            self.setWindowTitle(f"{APP_NAME} {__version__} · {Path(path).name}")
+            self.setWindowTitle(f"{APP_NAME} {VERSION_LABEL} · {Path(path).name}")
             self.statusBar().showMessage("專案已開啟")
             self.refresh()
         self.launch(task, done)
@@ -1009,35 +1197,9 @@ class MainWindow(W.QMainWindow):
 
 
 def main():
-    import time
-    set_windows_identity()
-    app = W.QApplication(sys.argv)
-    # Fusion draws spin-box arrows consistently; the Windows 11 style lays them
-    # out side by side and its hit areas do not match the custom stylesheet.
-    app.setStyle("Fusion")
-    app.setPalette(dark_palette())
-    app.setApplicationName(APP_NAME)
-    app.setOrganizationName("SaxStudio")
-    app.setWindowIcon(application_icon())
-    splash = StartupSplash(app.windowIcon())
-    started = time.monotonic()
-    splash.show()
-    app.processEvents()
-    window = MainWindow()
-    window.show()
-    def verify_tools():
-        try:
-            problems = check_ffmpeg()
-        except Exception as exc:
-            problems = [f"FFmpeg 無法執行：{exc}"]
-        if problems:
-            window.show_error("FFmpeg 不符合需求，部分功能會失敗\n" + "\n".join(problems) +
-                              "\n\n請將 FFmpeg 7.1 以上的完整版 ffmpeg.exe／ffprobe.exe 放進 tools 資料夾。")
-    def finish_startup():
-        splash.finish(window)
-        QtCore.QTimer.singleShot(150, verify_tools)
-    QtCore.QTimer.singleShot(max(0, round(900-(time.monotonic()-started)*1000)), finish_startup)
-    sys.exit(app.exec() if QT6 else app.exec_())
+    # Kept for compatibility; the launcher shows the splash before heavy imports.
+    from .launcher import main as launch
+    launch()
 
 
 if __name__ == "__main__":
