@@ -13,7 +13,7 @@ APP_NAME = "Sax Cover Studio"
 APP_ID = "SaxCoverStudio.Desktop"
 # Physical pixel size shared by the PyInstaller boot image and the Qt splash,
 # so the hand-off between them does not jump in size or position.
-SPLASH_SIZE = (960, 540)
+SPLASH_SIZE = (720, 405)  # PyInstaller boot splash allows at most 760x480
 
 
 def asset_path(name):
