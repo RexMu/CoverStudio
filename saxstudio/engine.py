@@ -54,16 +54,16 @@ def shift_filter(offset):
 def render_mix(project: Project, output, cancel=None, progress=None):
     """Render full source timeline. Edits are applied only at export/playback."""
     project.validate()
-    if not project.video or project.duration <= 0:
-        raise ValueError("請先匯入影片")
-    info = probe(project.video, cancel)
+    if not project.source or project.duration <= 0:
+        raise ValueError("請先錄音" if project.is_record else "請先匯入影片")
+    info = probe(project.source, cancel)
     if not info["audio"]:
-        raise ValueError("影片沒有音訊")
+        raise ValueError("錄音沒有音訊" if project.is_record else "影片沒有音訊")
     fx = project.effects
     output = Path(output)
     with tempfile.TemporaryDirectory(prefix="sax-render-") as folder:
         ir = Path(folder) / "room.wav"
-        args = [binary("ffmpeg"), "-v", "error", "-y", "-i", project.video]
+        args = [binary("ffmpeg"), "-v", "error", "-y", "-i", project.source]
         inputs = 1
         if project.backing:
             args += ["-i", project.backing]
@@ -126,7 +126,9 @@ def export(project: Project, destination, cancel=None, progress=None):
         raise ValueError("沒有保留片段，無法匯出")
     if destination.suffix.lower() not in (".mp4", ".wav", ".mp3"):
         raise ValueError("匯出格式請選擇 MP4、WAV 或 MP3")
-    if destination.resolve() in [Path(p).resolve() for p in (project.video, project.backing) if p]:
+    if project.is_record and destination.suffix.lower() == ".mp4":
+        raise ValueError("錄音模式沒有畫面，請匯出 WAV 或 MP3")
+    if destination.resolve() in [Path(p).resolve() for p in (project.video, project.backing, project.recording) if p]:
         raise ValueError("匯出檔不能覆蓋原始影片或伴奏")
     # Write next to the destination, then atomically replace after successful completion.
     with tempfile.TemporaryDirectory(prefix="sax-export-") as folder:

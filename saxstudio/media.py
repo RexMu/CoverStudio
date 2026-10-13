@@ -107,6 +107,16 @@ def decode_mono(path, rate=8000, duration=None, cancel=None):
     return samples
 
 
+def decode_stereo(path, rate=48000, cancel=None):
+    """Whole file as float32 (frames, 2) at `rate`, for headphone playback."""
+    args = [binary("ffmpeg"), "-v", "error", "-i", str(path), "-vn", "-ac", "2", "-ar", str(rate),
+            "-f", "f32le", "pipe:1"]
+    samples = np.frombuffer(run(args, cancel), dtype="<f4").copy()
+    if not len(samples):
+        raise ValueError("伴奏沒有可解碼的音訊")
+    return samples[:len(samples) - len(samples) % 2].reshape(-1, 2)
+
+
 def active_range(path, rate=8000, threshold_db=-40.0, cancel=None):
     """First/last moment the track is audibly playing, in seconds.
 

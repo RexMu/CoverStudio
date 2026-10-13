@@ -30,6 +30,25 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(loaded.clips, [Clip(4, 9)])
             self.assertEqual(loaded.effects.bands, p.effects.bands)
 
+    def test_record_project_roundtrip_and_old_files_default_to_video(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d)/"錄音專案.saxproj"
+            p = Project(mode="record", recording=str(Path(d)/"take.wav"), backing=str(Path(d)/"b.mp3"),
+                        duration=12, clips=[Clip(0, 12)], offset=3.0385)
+            p.save(path)
+            loaded = Project.load(path)
+            self.assertEqual((loaded.mode, loaded.offset), ("record", 3.0385))
+            self.assertTrue(loaded.is_record)
+            self.assertEqual(loaded.source, str((Path(d)/"take.wav").resolve()))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            del data["mode"], data["recording"]
+            path.write_text(json.dumps(data), encoding="utf-8")
+            self.assertEqual(Project.load(path).mode, "video")
+            data["mode"] = "camera"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                Project.load(path)
+
     def test_invalid_project_rejected(self):
         for p in [Project(duration=float("nan")), Project(duration=3, clips=[Clip(2, 1)]),
                   Project(duration=3, clips=[Clip(0, 2), Clip(1, 3)])]:
@@ -330,6 +349,28 @@ class MediaTests(unittest.TestCase):
         video_time = np.argmax(np.frombuffer(raw, np.uint8).reshape(-1, 64).mean(1) > 128)/30
         self.assertAlmostEqual(audio_time, .5, delta=.02)
         self.assertAlmostEqual(video_time, .5, delta=.04)
+
+    def test_record_mode_renders_recording_and_refuses_mp4(self):
+        take = self.root/"錄音.wav"
+        rate = 48000
+        x = np.zeros(rate*3, np.float32)
+        x[rate:rate+4800] = .3*np.sin(2*np.pi*440*np.arange(4800)/rate)
+        wavfile.write(take, rate, x)
+        p = Project(mode="record", recording=str(take), backing=str(self.root/"伴奏.wav"), duration=3,
+                    clips=[Clip(0, 3)], backing_muted=True, offset=1.5)
+        p.effects.limiter_enabled = False
+        self.assertEqual(p.source, str(take))
+        out = self.root/"錄音混音.wav"
+        render_mix(p, out)
+        _, data = wavfile.read(out)
+        self.assertEqual(len(data), rate*3)
+        self.assertLess(np.max(abs(data[:rate-10])), .001)
+        self.assertGreater(np.max(abs(data[rate:rate+4800])), .1)
+        export(p, self.root/"錄音輸出.mp3")
+        with self.assertRaises(ValueError):
+            export(p, self.root/"錄音輸出.mp4")
+        with self.assertRaises(ValueError):
+            export(p, take)
 
     def test_room_response_predelay_and_decay(self):
         out = self.root/"ir.wav"

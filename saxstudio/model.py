@@ -38,6 +38,9 @@ class Clip:
     end: float
 
 
+MODES = ("video", "record")
+
+
 @dataclass
 class Project:
     video: str = ""
@@ -51,6 +54,19 @@ class Project:
     backing_muted: bool = False
     effects: Effects = field(default_factory=Effects)
     clips: list[Clip] = field(default_factory=list)
+    # "video": track 1 is the imported video's audio. "record": track 1 is a
+    # WAV recorded in the app while the backing played (no picture).
+    mode: str = "video"
+    recording: str = ""
+
+    @property
+    def source(self):
+        """The file feeding track 1."""
+        return self.recording if self.mode == "record" else self.video
+
+    @property
+    def is_record(self):
+        return self.mode == "record"
 
     @property
     def output_duration(self):
@@ -60,6 +76,8 @@ class Project:
         def bounded(value, lo, hi, label):
             if not isinstance(value, (int, float)) or not math.isfinite(value) or not lo <= value <= hi:
                 raise ValueError(f"{label} 超出允許範圍")
+        if self.mode not in MODES:
+            raise ValueError("不支援的專案模式")
         bounded(self.duration, 0, 86400, "影片長度")
         bounded(self.offset, -86400, 86400, "伴奏位移")
         for v in (self.video_db, self.backing_db):
@@ -118,7 +136,7 @@ class Project:
         path = Path(path)
         data = asdict(self)
         data["version"] = 1
-        for key in ("video", "backing"):
+        for key in ("video", "backing", "recording"):
             if data[key]:
                 # Absolute paths support drives different from the project drive.
                 data[key] = str(Path(data[key]).resolve())
@@ -141,7 +159,7 @@ class Project:
             p = cls(**data, effects=Effects(**effects), clips=clips)
         except (KeyError, TypeError, AttributeError) as exc:
             raise ValueError("專案檔格式不正確或缺少必要欄位") from exc
-        for name in ("video", "backing"):
+        for name in ("video", "backing", "recording"):
             value = getattr(p, name)
             if value and not Path(value).is_absolute():
                 setattr(p, name, str((Path(path).parent / value).resolve()))

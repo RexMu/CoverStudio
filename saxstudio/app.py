@@ -13,8 +13,10 @@ from .effect_panels import CollapsibleEffect, PresetBar
 from .help_text import COMP_HELP, EQ_HELP, PRESETS, REVB_HELP
 from .alignment import align_files
 from .engine import audio_origin, export, render_mix
-from .media import active_range, decode_mono, probe, thumbnail, waveform
+from . import recorder
+from .media import active_range, decode_mono, decode_stereo, probe, thumbnail, waveform
 from .model import Clip, Effects, Project
+from .record_panel import CalibrationDialog, NewProjectDialog, RecordPanel
 from .qt import QT6, QtCore, QtGui, QtMultimedia, QtWidgets as W, QtMultimediaWidgets, player, source, state_stopped
 from .widgets import EQGraph, Timeline, Worker
 
@@ -55,6 +57,13 @@ QPushButton#preset { padding: 6px 12px; border-radius: 14px; }
 QPushButton#preset:checked { background: #24bdb9; color: #082b32; border-color: #24bdb9; font-weight: 700; }
 QLabel#presetCustom { color: #617386; padding: 0 6px; }
 QLabel#presetCustom:enabled { color: #e9b853; font-weight: 600; }
+QPushButton#record { background: #d9534f; color: #ffffff; border: none; border-radius: 8px; padding: 13px; font-size: 16px; font-weight: 700; }
+QPushButton#record:hover { background: #e8645f; }
+QPushButton#record:disabled { background: #4a3134; color: #a99; }
+QPushButton#stopRecord { background: #2b3b4d; color: #ffffff; border: 1px solid #ff8a7a; border-radius: 8px; padding: 13px; font-size: 16px; font-weight: 700; }
+QPushButton#modeCard { text-align: left; padding: 16px; background: #182635; border: 1px solid #304359; border-radius: 10px; font-size: 13px; }
+QPushButton#modeCard:checked { background: #17333a; border: 2px solid #32d4ce; }
+QLabel#modeBadge { background: #0f1b27; border: 1px solid #304359; border-radius: 8px; padding: 6px 12px; font-weight: 600; }
 QSplitter::handle { background: #1c2b3a; }
 QSplitter::handle:hover { background: #2ac5bf; }
 QToolButton#section { background: transparent; border: none; font-weight: 600; padding: 4px 2px; text-align: left; }
@@ -116,6 +125,15 @@ def backing_range(path, cancel=None):
         return None
 
 
+def waveform_or_empty(path):
+    if not path:
+        return np.array([])
+    try:
+        return waveform(path)
+    except Exception:
+        return np.array([])
+
+
 def clock(seconds):
     ms = round(max(0, seconds)*1000)
     return f"{ms//60000:02}:{ms//1000%60:02}.{ms%1000:03}"
@@ -143,6 +161,12 @@ class MainWindow(W.QMainWindow):
         self.video_failed = False
         self.backing_range = None
         self.alignment_reliable = None
+        self.session = None
+        self.recording_active = False
+        self.calibration_dialog = None
+        self.live_peaks = []
+        self.live_update = 0
+        self.inputs, self.outputs = [], []
         self.pending_since = 0.0
         self.last_resync = 0.0
         self.settings = QtCore.QSettings("SaxStudio", "SaxStudio")
@@ -154,7 +178,11 @@ class MainWindow(W.QMainWindow):
         self.build_ui()
         self.video_player = player(self, self.video_widget, muted=True)
         self.audio_player = player(self)
-        self.video_player.positionChanged.connect(self.on_position)
+        # The playback clock is the video in video mode and the mix in record mode.
+        self.video_player.positionChanged.connect(
+            lambda ms: None if self.project.is_record else self.on_position(ms))
+        self.audio_player.positionChanged.connect(
+            lambda ms: self.on_position(ms) if self.project.is_record else None)
         if QT6:
             self.video_player.errorOccurred.connect(lambda *a: self.playback_error("影片", self.video_player.errorString()))
             self.audio_player.errorOccurred.connect(lambda *a: self.playback_error("音訊", self.audio_player.errorString()))
@@ -166,6 +194,7 @@ class MainWindow(W.QMainWindow):
         self.sync_timer.timeout.connect(self.sync_players)
         self.sync_timer.start()
         self.load_controls()
+        self.apply_mode()
         self.refresh()
         self.setup_shortcuts()
 
@@ -195,10 +224,15 @@ class MainWindow(W.QMainWindow):
         header.addWidget(self.export_button)
         layout.addLayout(header)
         toolbar = W.QHBoxLayout()
-        self.import_video_button = button("匯入影片", self.import_video)
+        self.mode_badge = W.QLabel("尚未建立專案")
+        self.mode_badge.setObjectName("modeBadge")
+        self.mode_badge.setToolTip("模式在開新專案時決定；要換模式請按「新專案」")
+        toolbar.addWidget(self.mode_badge)
+        self.new_button = button("新專案", self.new_project)
         self.import_back_button = button("匯入伴奏", self.import_backing)
-        for b in [self.import_video_button, self.import_back_button,
-                  button("開啟專案", self.open_project), button("儲存專案", self.save_project)]:
+        self.open_button = button("開啟專案", self.open_project)
+        self.save_button = button("儲存專案", self.save_project)
+        for b in [self.new_button, self.import_back_button, self.open_button, self.save_button]:
             toolbar.addWidget(b)
         self.project_label = W.QLabel("尚未匯入影片")
         self.project_label.setObjectName("muted")
@@ -217,7 +251,7 @@ class MainWindow(W.QMainWindow):
         fx_layout.setContentsMargins(0, 0, 0, 0)
         fx_layout.setSpacing(8)
         fx_header = W.QHBoxLayout()
-        fx_title = W.QLabel("第一軌 · 影片原音 效果")
+        fx_title = self.fx_title = W.QLabel("第一軌 · 影片原音 效果")
         fx_title.setStyleSheet("color: #27c9c3; font-weight: 600;")
         fx_title.setToolTip("EQ、壓縮、混響只處理影片原音；匯入的伴奏不會套用這些效果")
         fx_header.addWidget(fx_title)
@@ -329,12 +363,29 @@ class MainWindow(W.QMainWindow):
         self.video_stack.setMinimumSize(240, 135)
         self.video_stack.addWidget(self.video_empty)
         self.video_stack.addWidget(self.video_widget)
-        right.addWidget(self.video_stack, 1)
+        self.video_section = W.QWidget()
+        video_layout = W.QVBoxLayout(self.video_section)
+        video_layout.setContentsMargins(0, 0, 0, 0)
+        video_layout.addWidget(self.video_stack, 1)
         self.video_name = W.QLabel("影片預覽 · 尚未匯入")
         self.video_name.setObjectName("muted")
         self.video_name.setWordWrap(True)
-        right.addWidget(self.video_name)
-        edits = W.QFrame()
+        video_layout.addWidget(self.video_name)
+        self.record_panel = RecordPanel()
+        self.record_scroll = W.QScrollArea()
+        self.record_scroll.setWidgetResizable(True)
+        self.record_scroll.setWidget(self.record_panel)
+        self.right_stack = W.QStackedWidget()
+        self.right_stack.addWidget(self.video_section)
+        self.right_stack.addWidget(self.record_scroll)
+        right.addWidget(self.right_stack, 1)
+        self.record_panel.device_changed.connect(self.on_record_device_changed)
+        self.record_panel.record_requested.connect(self.start_recording)
+        self.record_panel.stop_requested.connect(self.stop_recording)
+        self.record_panel.calibrate_requested.connect(self.open_calibration)
+        self.record_panel.play_requested.connect(self.toggle_play)
+        self.record_panel.volume_changed.connect(self.on_record_volume)
+        edits = self.edits_frame = W.QFrame()
         edits.setObjectName("card")
         edits_outer = W.QVBoxLayout(edits)
         edits_outer.setContentsMargins(10, 4, 10, 6)
@@ -393,7 +444,7 @@ class MainWindow(W.QMainWindow):
         self.h_split.addWidget(right_widget)
         self.h_split.setStretchFactor(0, 3)
         self.h_split.setStretchFactor(1, 2)
-        lower_widget = W.QWidget()
+        lower_widget = self.lower_widget = W.QWidget()
         lower = W.QVBoxLayout(lower_widget)
         lower.setContentsMargins(0, 6, 0, 0)
         lower.setSpacing(10)
@@ -414,6 +465,10 @@ class MainWindow(W.QMainWindow):
         self.align_label = W.QLabel("匯入伴奏後可比對前 90 秒")
         self.align_label.setObjectName("muted")
         align_row.addWidget(self.align_label, 1)
+        self.record_offset_label = W.QLabel("錄音後會自動計算伴奏位移")
+        self.record_offset_label.setObjectName("muted")
+        self.record_offset_label.hide()
+        align_row.addWidget(self.record_offset_label, 1)
         align_row.addWidget(W.QLabel("伴奏位移（＋延後／－提前）"))
         self.offset = spin(-86400000, 86400000, 0, 1, " ms")
         self.offset.setSingleStep(1)
@@ -425,6 +480,7 @@ class MainWindow(W.QMainWindow):
         track_controls = W.QVBoxLayout()
         track_controls.setContentsMargins(0, 28, 0, 6)
         self.volume_fields = []
+        self.track_names, self.track_hints = [], []
         for label, color, value, hint in [
                 ("第一軌 · 影片原音", "#27c9c3", 0, "套用上方 EQ／壓縮／混響"),
                 ("第二軌 · 伴奏", "#e9b853", -6, "只調整音量與位移，不套用音效")]:
@@ -438,6 +494,8 @@ class MainWindow(W.QMainWindow):
             head.addStretch()
             hint_label = W.QLabel(hint)
             hint_label.setObjectName("muted")
+            self.track_names.append(name)
+            self.track_hints.append(hint_label)
             head.addWidget(hint_label)
             f.addLayout(head)
             row = W.QHBoxLayout()
@@ -470,8 +528,10 @@ class MainWindow(W.QMainWindow):
         transport = W.QHBoxLayout()
         self.play_button = button("▶ 播放", self.toggle_play, True)
         transport.addWidget(self.play_button)
-        transport.addWidget(button("■ 停止", self.stop))
-        transport.addWidget(button("更新音效預覽", lambda: self.prepare_preview(False)))
+        self.stop_button = button("■ 停止", self.stop)
+        transport.addWidget(self.stop_button)
+        self.preview_button = button("更新音效預覽", lambda: self.prepare_preview(False))
+        transport.addWidget(self.preview_button)
         self.time_label = W.QLabel("原片時間 00:00.000")
         transport.addWidget(self.time_label)
         transport.addStretch()
@@ -723,6 +783,354 @@ class MainWindow(W.QMainWindow):
             self.video_stack.setCurrentWidget(self.video_empty)
         self.statusBar().showMessage(f"{name}預覽無法播放：{text}。請確認裝置與編碼；仍可嘗試匯出。")
 
+    # ------------------------------------------------------------ modes
+    def new_project(self):
+        if self.busy or self.recording_active:
+            return
+        dialog = NewProjectDialog(self)
+        accepted = dialog.exec() if QT6 else dialog.exec_()
+        if not accepted or not dialog.choice:
+            return
+        if dialog.choice == "video":
+            self.import_video()
+        else:
+            self.new_record_project()
+
+    def new_record_project(self):
+        if self.busy or self.recording_active:
+            return
+        path, _ = W.QFileDialog.getOpenFileName(self, "錄音模式：匯入伴奏", "", AUDIO_FILTER)
+        if not path or not self.confirm_discard():
+            return
+        def task(cancel, progress):
+            progress("正在讀取伴奏波形…")
+            info = probe(path, cancel)
+            if not info["audio"]:
+                raise ValueError("伴奏檔案没有音訊")
+            return info, waveform(path, cancel), backing_range(path, cancel)
+        def done(result):
+            info, wave, audible = result
+            self.project = Project(mode="record", backing=path, duration=0.0, clips=[])
+            self.backing_range = audible
+            self.alignment_reliable = None
+            self.preset_backup = None
+            self.preset_undo.setEnabled(False)
+            self.project_path = None
+            self.undo_stack.clear()
+            self.timeline.video_wave = np.array([])
+            self.timeline.video_duration = None
+            self.timeline.back_wave = wave
+            self.timeline.back_duration = info["duration"]
+            self.load_media(None)
+            self.load_controls()
+            self.apply_mode()
+            self.record_panel.set_state("ready")
+            self.record_offset_label.setText("錄音後會自動計算伴奏位移")
+            self.mark_dirty()
+            self.statusBar().showMessage("伴奏已匯入。確認麥克風音量後，按「開始錄音」")
+            self.refresh()
+        self.launch(task, done)
+
+    def apply_mode(self):
+        rec = self.project.is_record
+        self.right_stack.setCurrentWidget(self.record_scroll if rec else self.video_section)
+        if rec:
+            self.mode_badge.setText("目前模式　● 錄音")
+        elif self.project.video:
+            self.mode_badge.setText("目前模式　▶ 匯入影片")
+        else:
+            self.mode_badge.setText("尚未建立專案")
+        self.align_button.setVisible(not rec)
+        self.align_label.setVisible(not rec)
+        self.record_offset_label.setVisible(rec)
+        self.track_names[0].setText("第一軌 · 錄音" if rec else "第一軌 · 影片原音")
+        self.fx_title.setText("第一軌 · 錄音 效果" if rec else "第一軌 · 影片原音 效果")
+        self.export_button.setText("匯出音訊（WAV / MP3）" if rec else "匯出影片 / 音訊")
+        self.timeline.empty_text = ("匯入伴奏後開始錄音，波形會顯示在這裡" if rec else
+                                    "匯入影片與伴奏後，波形會顯示在這裡")
+        if not self.recording_active:
+            self.timeline.override_duration = (self.timeline.back_duration or None) if rec and not self.project.recording else None
+        if rec:
+            self.ensure_session()
+        elif self.session is not None and not self.recording_active:
+            self.session.close_input()
+        self.timeline.update()
+
+    def set_recording_ui(self, active):
+        for widget in (self.h_split.widget(0), self.edits_frame, self.lower_widget):
+            widget.setEnabled(not active)
+
+    def update_record_buttons(self):
+        if not hasattr(self, "record_panel"):
+            return
+        ready = (self.project.is_record and bool(self.project.backing) and not self.busy
+                 and self.session is not None and self.session.input_open)
+        if not self.record_panel.unavailable.text():
+            self.record_panel.record_button.setEnabled(ready)
+            self.record_panel.rerecord_button.setEnabled(ready)
+            self.record_panel.calibrate_button.setEnabled(
+                not self.busy and not self.recording_active and self.session is not None and self.session.input_open)
+
+    # ------------------------------------------------------------ audio devices
+    def ensure_session(self):
+        if not recorder.audio_available():
+            self.record_panel.set_unavailable("此環境的 Qt 不支援錄音；請使用 Windows 版（PySide6／Qt 6）。")
+            return False
+        if self.session is None:
+            self.session = recorder.AudioSession(self)
+            self.session.level.connect(self.on_record_level)
+            self.session.progress.connect(self.on_record_progress)
+            self.session.countdown.connect(self.on_record_countdown)
+            self.session.take_finished.connect(self.finish_recording)
+            self.session.calibration_finished.connect(self.on_calibration_result)
+            self.session.failed.connect(self.on_record_failed)
+            self.populate_devices()
+        elif not self.session.input_open:
+            self.open_selected_input()
+        return True
+
+    def populate_devices(self):
+        panel = self.record_panel
+        self.inputs, self.outputs = recorder.input_devices(), recorder.output_devices()
+        for combo in (panel.input_combo, panel.channel_combo, panel.output_combo, panel.countdown_combo):
+            combo.blockSignals(True)
+        panel.input_combo.clear()
+        panel.output_combo.clear()
+        for combo, devices, key in ((panel.input_combo, self.inputs, "record/input"),
+                                    (panel.output_combo, self.outputs, "record/output")):
+            for device in devices:
+                combo.addItem(device.description())
+            saved = self.settings.value(key)
+            keys = [recorder.device_key(d) for d in devices]
+            if saved in keys:
+                combo.setCurrentIndex(keys.index(saved))
+        countdown = int(self.float_setting("record/countdown", 3))
+        index = panel.countdown_combo.findData(countdown)
+        panel.countdown_combo.setCurrentIndex(max(0, index))
+        panel.volume_slider.setValue(round(self.float_setting("record/volume", -6.0) * 10))
+        self.fill_channels()
+        for combo in (panel.input_combo, panel.channel_combo, panel.output_combo, panel.countdown_combo):
+            combo.blockSignals(False)
+        panel.countdown_combo.currentIndexChanged.connect(
+            lambda *_: self.settings.setValue("record/countdown", panel.countdown))
+        if not self.inputs:
+            panel.set_unavailable("找不到錄音裝置。請連接錄音介面後重新開啟程式。")
+            return
+        if not self.outputs:
+            panel.set_unavailable("找不到播放裝置，無法在耳機播放伴奏。")
+            return
+        self.open_selected_input()
+
+    def fill_channels(self):
+        panel = self.record_panel
+        device = self.selected_input()
+        count = max(1, device.maximumChannelCount()) if device is not None else 1
+        saved = int(self.float_setting("record/channel", 0))
+        panel.channel_combo.clear()
+        for i in range(min(count, 8)):
+            panel.channel_combo.addItem(f"輸入 {i+1}（單聲道）", i)
+        panel.channel_combo.setCurrentIndex(min(saved, panel.channel_combo.count()-1))
+
+    def selected_input(self):
+        i = self.record_panel.input_combo.currentIndex()
+        return self.inputs[i] if 0 <= i < len(self.inputs) else None
+
+    def selected_output(self):
+        i = self.record_panel.output_combo.currentIndex()
+        return self.outputs[i] if 0 <= i < len(self.outputs) else None
+
+    def latency_key(self):
+        a, b = self.selected_input(), self.selected_output()
+        if a is None or b is None:
+            return None
+        return f"record/latency/{recorder.device_key(a)}-{recorder.device_key(b)}"
+
+    def current_latency(self):
+        key = self.latency_key()
+        if not key or self.settings.value(key) is None:
+            return None
+        return self.float_setting(key, 0.0)
+
+    def open_selected_input(self):
+        device = self.selected_input()
+        if device is None or self.session is None:
+            return
+        channel = int(self.record_panel.channel_combo.currentData() or 0)
+        if self.session.open_input(device, channel):
+            self.record_panel.format_label.setText(f"{self.session.rate/1000:g} kHz · 32-bit 浮點 · 單聲道")
+        self.record_panel.set_latency(self.current_latency())
+        self.update_record_buttons()
+
+    def on_record_device_changed(self):
+        if self.session is None or self.recording_active:
+            return
+        panel = self.record_panel
+        input_key = recorder.device_key(self.selected_input()) if self.selected_input() is not None else None
+        if input_key != self.settings.value("record/input"):
+            panel.channel_combo.blockSignals(True)
+            self.fill_channels()
+            panel.channel_combo.blockSignals(False)
+        if input_key:
+            self.settings.setValue("record/input", input_key)
+        if self.selected_output() is not None:
+            self.settings.setValue("record/output", recorder.device_key(self.selected_output()))
+        self.settings.setValue("record/channel", int(panel.channel_combo.currentData() or 0))
+        self.open_selected_input()
+
+    def on_record_volume(self, value_db):
+        self.settings.setValue("record/volume", value_db)
+        if self.session is not None and self.session.sink is not None:
+            self.session.sink.setVolume(min(1.0, 10 ** (value_db / 20)))
+
+    # ------------------------------------------------------------ recording
+    def recordings_dir(self):
+        paths = QtCore.QStandardPaths
+        location = getattr(getattr(paths, "StandardLocation", paths), "DocumentsLocation")
+        base = paths.writableLocation(location) or str(Path.home())
+        return Path(base) / "Sax Cover Studio" / "錄音"
+
+    def start_recording(self):
+        if self.busy or self.recording_active or not self.project.is_record:
+            return
+        if not self.project.backing:
+            self.show_error("請先匯入伴奏")
+            return
+        if self.session is None or not self.session.input_open:
+            self.show_error("麥克風尚未開啟，請確認輸入裝置")
+            return
+        if self.project.recording:
+            answer = W.QMessageBox.question(
+                self, "重錄", "重錄會取代目前的錄音。\n伴奏、EQ／壓縮／混響、音量與延遲校正都會保留。\n要開始重錄嗎？",
+                W.QMessageBox.Yes | W.QMessageBox.No, W.QMessageBox.Yes)
+            if answer != W.QMessageBox.Yes:
+                return
+        if self.current_latency() is None:
+            answer = W.QMessageBox.question(
+                self, "尚未校正延遲", "這組錄音介面與耳機還沒做延遲校正，錄完可能需要手動微調伴奏位移。\n要先做校正嗎？（約 10 秒）",
+                W.QMessageBox.Yes | W.QMessageBox.No, W.QMessageBox.Yes)
+            if answer == W.QMessageBox.Yes:
+                self.open_calibration()
+                return
+        self.pause()
+        backing = self.project.backing
+        def task(cancel, progress):
+            progress("正在準備伴奏…")
+            return decode_stereo(backing, cancel=cancel)
+        self.launch(task, self.begin_take)
+
+    def begin_take(self, samples):
+        stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd-HHmmss")
+        path = self.recordings_dir() / f"錄音-{stamp}.wav"
+        countdown = self.record_panel.countdown
+        volume = min(1.0, 10 ** (self.record_panel.volume_db / 20))
+        self.live_peaks = []
+        self.record_panel.reset_clip()
+        self.record_panel.clip_label.setText("錄音中…")
+        if not self.session.start_take(str(path), self.selected_output(), samples, volume, countdown):
+            return
+        self.recording_active = True
+        self.record_panel.set_state("countdown" if countdown else "recording")
+        self.timeline.override_duration = countdown + len(samples) / 48000 + 2.5
+        self.timeline.video_wave = np.array([])
+        self.timeline.video_duration = 1e-6
+        self.timeline.position = 0
+        self.refresh()
+        self.statusBar().showMessage(f"錄音中 · 檔案：{path}")
+
+    def stop_recording(self):
+        if self.session is not None and self.recording_active:
+            self.session.stop_take()
+
+    def on_record_level(self, peak):
+        self.record_panel.set_level(peak)
+        if self.recording_active:
+            self.live_peaks.append(peak)
+
+    def on_record_progress(self, seconds, left):
+        self.record_panel.set_progress(seconds, left)
+        now = QtCore.QDateTime.currentMSecsSinceEpoch()
+        if self.recording_active and now - self.live_update > 120 and self.live_peaks:
+            self.live_update = now
+            peaks = np.array(self.live_peaks, dtype=float)
+            self.timeline.video_wave = np.clip(peaks / max(.05, float(peaks.max())), 0, 1)
+            self.timeline.video_duration = max(seconds, 1e-6)
+            self.timeline.position = seconds
+            self.timeline.update()
+
+    def on_record_countdown(self, seconds):
+        self.record_panel.set_countdown(seconds)
+        if seconds == 0:
+            self.record_panel.set_state("recording")
+
+    def finish_recording(self, result):
+        self.recording_active = False
+        latency = self.current_latency() or 0.0
+        offset = recorder.recording_offset(result.start_offset, latency)
+        path = result.path
+        def task(cancel, progress):
+            progress("正在分析錄音…")
+            return probe(path, cancel), waveform(path, cancel)
+        def done(analysis):
+            info, wave = analysis
+            p = self.project
+            p.recording = path
+            p.duration = info["duration"]
+            p.clips = [Clip(0, p.duration)]
+            p.offset = offset
+            self.undo_stack.clear()
+            self.alignment_reliable = None
+            self.timeline.override_duration = None
+            self.timeline.video_duration = None
+            self.timeline.video_wave = wave
+            self.load_media(None)
+            self.load_controls()
+            self.apply_mode()
+            self.mark_dirty(audio=True)
+            self.record_panel.set_done(p.duration, path)
+            self.record_offset_label.setText(f"位移由錄音時間自動計算（已扣除 {latency:.1f} ms 延遲），可再手動微調")
+            if result.peak >= .985:
+                self.statusBar().showMessage("錄音完成，但有破音；建議調低錄音介面的輸入增益後重錄")
+            else:
+                self.statusBar().showMessage("錄音完成並放入第一軌；按播放核對，或按「依伴奏自動裁剪」")
+            self.refresh()
+        self.record_panel.set_state("done" if self.project.recording else "ready")
+        self.launch(task, done)
+
+    def on_record_failed(self, text):
+        if self.calibration_dialog is not None:
+            self.calibration_dialog.show_error(text)
+            return
+        if self.recording_active:
+            self.recording_active = False
+            self.record_panel.set_state("done" if self.project.recording else "ready")
+            self.timeline.override_duration = None if self.project.recording else (self.timeline.back_duration or None)
+            self.timeline.video_duration = None
+            self.timeline.video_wave = (waveform_or_empty(self.project.recording))
+            self.refresh()
+        self.show_error(text)
+
+    # ------------------------------------------------------------ calibration
+    def open_calibration(self):
+        if self.busy or self.recording_active or self.session is None or not self.session.input_open:
+            return
+        dialog = CalibrationDialog(self.current_latency(), self)
+        dialog.measure_requested.connect(lambda: self.session.calibrate(self.selected_output()))
+        self.calibration_dialog = dialog
+        try:
+            accepted = dialog.exec() if QT6 else dialog.exec_()
+        finally:
+            self.calibration_dialog = None
+            if self.session.mode == "calibrate":
+                self.session.cancel()
+        if accepted and dialog.result_ms is not None and self.latency_key():
+            self.settings.setValue(self.latency_key(), float(dialog.result_ms))
+            self.record_panel.set_latency(dialog.result_ms)
+            self.statusBar().showMessage(f"已套用延遲補償 {dialog.result_ms:.1f} ms")
+
+    def on_calibration_result(self, median, spread, found):
+        if self.calibration_dialog is not None:
+            self.calibration_dialog.show_result(median, spread, found)
+
     def confirm_discard(self):
         if not self.dirty:
             return True
@@ -758,6 +1166,7 @@ class MainWindow(W.QMainWindow):
             self.timeline.back_duration = 0
             self.load_media(still)
             self.load_controls()
+            self.apply_mode()
             self.mark_dirty(audio=True)
             self.align_label.setText("匯入伴奏後可比對前 90 秒")
             self.statusBar().showMessage("影片已匯入，接著可匯入伴奏")
@@ -765,7 +1174,7 @@ class MainWindow(W.QMainWindow):
         self.launch(task, done)
 
     def import_backing(self):
-        if self.busy or not self.project.video:
+        if self.busy or self.recording_active or not (self.project.video or self.project.is_record):
             return
         path, _ = W.QFileDialog.getOpenFileName(self, "匯入同一版本伴奏", "", AUDIO_FILTER)
         if not path:
@@ -780,10 +1189,15 @@ class MainWindow(W.QMainWindow):
             info, wave, audible = result
             self.backing_range = audible
             self.alignment_reliable = None
-            self.project.backing, self.project.offset = path, 0
+            self.project.backing = path
+            if not self.project.is_record:
+                # A recording keeps its measured offset: the backing starts at
+                # the same moment for any version of the same song.
+                self.project.offset = 0
             self.timeline.back_wave = wave
             self.timeline.back_duration = info["duration"]
             self.load_controls()
+            self.apply_mode()
             self.mark_dirty(audio=True)
             self.align_label.setText("尚未對齊 · 請按自動對齊前奏")
             self.statusBar().showMessage("伴奏已匯入")
@@ -794,7 +1208,7 @@ class MainWindow(W.QMainWindow):
         self.pause()
         self.video_failed = False
         self.video_stack.setCurrentWidget(self.video_widget)
-        source(self.video_player, self.project.video)
+        source(self.video_player, "" if self.project.is_record else self.project.video)
         if still:
             self.video_empty.setPixmap(QtGui.QPixmap(still).scaled(
                 self.video_stack.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
@@ -807,7 +1221,7 @@ class MainWindow(W.QMainWindow):
         self.mark_end.setMaximum(self.project.duration)
         self.mark_start.setValue(0)
         self.mark_end.setValue(self.project.duration)
-        self.video_name.setText(Path(self.project.video).name)
+        self.video_name.setText(Path(self.project.source).name if self.project.source else "")
         self.timeline.project = self.project
         self.timeline.selected = -1
         self.timeline.position = 0
@@ -830,7 +1244,7 @@ class MainWindow(W.QMainWindow):
         self.launch(task, done)
 
     def prepare_preview(self, autoplay=False):
-        if self.busy or not self.project.video:
+        if self.busy or self.recording_active or not self.project.source:
             return
         if not self.preview_dirty and self.preview_path:
             if autoplay:
@@ -884,9 +1298,10 @@ class MainWindow(W.QMainWindow):
             later = next((c for c in self.project.clips if c.start > self.position), self.project.clips[0])
             self.seek(later.start)
         self.audio_player.setPosition(round(self.position*1000))
-        if not self.video_failed:
-            self.video_stack.setCurrentWidget(self.video_widget)
-        self.video_player.play()
+        if not self.project.is_record:
+            if not self.video_failed:
+                self.video_stack.setCurrentWidget(self.video_widget)
+            self.video_player.play()
         self.audio_player.play()
         self.playing = True
         self.play_button.setText("Ⅱ 暫停")
@@ -909,7 +1324,7 @@ class MainWindow(W.QMainWindow):
 
     def seek(self, position):
         self.position = max(0, min(position, self.project.duration))
-        if self.project.video and not self.playing and not self.video_failed:
+        if self.project.video and not self.project.is_record and not self.playing and not self.video_failed:
             # Show the real frame at the playhead instead of the import still.
             if state_stopped(self.video_player):
                 self.video_player.play()
@@ -944,7 +1359,8 @@ class MainWindow(W.QMainWindow):
     def sync_players(self):
         if self.pending_play and not self.busy:
             media_status = QtMultimedia.QMediaPlayer.MediaStatus if QT6 else QtMultimedia.QMediaPlayer
-            statuses = (self.video_player.mediaStatus(), self.audio_player.mediaStatus())
+            statuses = ((self.audio_player.mediaStatus(),) if self.project.is_record else
+                        (self.video_player.mediaStatus(), self.audio_player.mediaStatus()))
             ready = (media_status.LoadedMedia, media_status.BufferedMedia, media_status.EndOfMedia)
             waited = QtCore.QDateTime.currentMSecsSinceEpoch() - self.pending_since
             if media_status.InvalidMedia in statuses:
@@ -961,7 +1377,7 @@ class MainWindow(W.QMainWindow):
         if self.playing:
             # The rendered mix is the master clock: nudging the muted video is
             # invisible compared with audible jumps in the music.
-            drift = self.audio_player.position()-self.video_player.position()
+            drift = 0 if self.project.is_record else self.audio_player.position()-self.video_player.position()
             now = QtCore.QDateTime.currentMSecsSinceEpoch()
             if abs(drift) > 150 and now - self.last_resync > 1000:
                 self.last_resync = now
@@ -980,7 +1396,7 @@ class MainWindow(W.QMainWindow):
         self.undo_stack = self.undo_stack[-100:]
 
     def auto_trim(self):
-        if self.busy or not self.project.video or not self.project.backing:
+        if self.busy or not self.project.source or not self.project.backing:
             return
         if not self.backing_range:
             self.show_error("伴奏沒有偵測到有聲音的範圍，無法自動裁剪")
@@ -1009,7 +1425,7 @@ class MainWindow(W.QMainWindow):
         self.statusBar().showMessage(f"已自動裁剪：保留 {clock(start)} → {clock(end)}（伴奏前 {self.pre_roll.value():g} 秒、後 {self.post_roll.value():g} 秒）")
 
     def trim(self):
-        if not self.project.video or self.busy:
+        if not self.project.source or self.busy:
             return
         snapshot = copy.deepcopy(self.project.clips)
         try:
@@ -1024,7 +1440,7 @@ class MainWindow(W.QMainWindow):
         self.refresh()
 
     def split(self):
-        if not self.project.video or self.busy:
+        if not self.project.source or self.busy:
             return
         snapshot = copy.deepcopy(self.project.clips)
         if self.project.split(self.position):
@@ -1054,7 +1470,7 @@ class MainWindow(W.QMainWindow):
             self.refresh()
 
     def reset_edits(self):
-        if not self.project.video or self.busy:
+        if not self.project.source or self.busy:
             return
         self.push_undo()
         self.project.clips = [Clip(0, self.project.duration)]
@@ -1068,15 +1484,21 @@ class MainWindow(W.QMainWindow):
         self.timeline.update()
 
     def refresh(self):
-        has = bool(self.project.video)
+        has = bool(self.project.source)
+        rec = self.project.is_record
+        idle = not self.busy and not self.recording_active
         self.controls.setEnabled(not self.busy)
-        self.import_video_button.setEnabled(not self.busy)
-        self.import_back_button.setEnabled(has and not self.busy)
-        self.align_button.setEnabled(bool(self.project.backing) and not self.busy)
-        self.autotrim_button.setEnabled(bool(self.project.backing) and bool(self.backing_range) and not self.busy)
-        self.export_button.setEnabled(has and bool(self.project.clips) and not self.busy)
-        self.play_button.setEnabled(has and bool(self.project.clips) and not self.busy)
-        self.limiter.setEnabled(not self.busy)
+        self.new_button.setEnabled(idle)
+        self.open_button.setEnabled(idle)
+        self.save_button.setEnabled(idle and has)
+        self.import_back_button.setEnabled((bool(self.project.video) or rec) and idle)
+        self.align_button.setEnabled(not rec and has and bool(self.project.backing) and idle)
+        self.autotrim_button.setEnabled(has and bool(self.project.backing) and bool(self.backing_range) and idle)
+        self.export_button.setEnabled(has and bool(self.project.clips) and idle)
+        self.play_button.setEnabled(has and bool(self.project.clips) and idle)
+        self.stop_button.setEnabled(idle)
+        self.preview_button.setEnabled(has and idle)
+        self.limiter.setEnabled(idle)
         self.undo_button.setEnabled(bool(self.undo_stack) and not self.busy)
         selected = self.clip_list.currentRow()
         self.clip_list.blockSignals(True)
@@ -1091,15 +1513,27 @@ class MainWindow(W.QMainWindow):
         self.duration_label.setText(f"輸出 {clock(self.project.output_duration)}")
         whole = [Clip(0, self.project.duration)]
         if not has:
-            self.edits_summary.setText("尚未匯入影片")
+            self.edits_summary.setText("尚未錄音" if rec else "尚未匯入影片")
         elif self.project.clips == whole:
             self.edits_summary.setText(f"未剪輯 · {clock(self.project.duration)}")
         else:
             self.edits_summary.setText(f"已剪輯 · {len(self.project.clips)} 段 · 輸出 {clock(self.project.output_duration)}")
-        self.project_label.setText(Path(self.project.video).name if has else "尚未匯入影片")
+        if has:
+            label = Path(self.project.source).name
+        elif rec and self.project.backing:
+            label = f"伴奏：{Path(self.project.backing).name}"
+        else:
+            label = "按「新專案」開始" if not self.project.backing else ""
+        if has and self.project.backing:
+            label += f"　·　伴奏：{Path(self.project.backing).name}"
+        self.project_label.setText(label)
+        self.set_recording_ui(self.recording_active)
+        self.update_record_buttons()
 
     def save_project(self):
-        if self.busy or not self.project.video:
+        if self.busy or self.recording_active or not self.project.source:
+            if self.project.is_record and not self.project.source:
+                self.statusBar().showMessage("請先錄音再儲存專案")
             return
         path = self.project_path
         if not path:
@@ -1118,7 +1552,7 @@ class MainWindow(W.QMainWindow):
             self.show_error(str(exc))
 
     def open_project(self):
-        if self.busy:
+        if self.busy or self.recording_active:
             return
         path, _ = W.QFileDialog.getOpenFileName(self, "開啟專案", "", f"{APP_NAME} 專案 (*.saxproj)")
         if not path or not self.confirm_discard():
@@ -1126,26 +1560,28 @@ class MainWindow(W.QMainWindow):
         def task(cancel, progress):
             progress("正在讀取專案與波形…")
             p = Project.load(path)
-            if not p.video:
-                raise ValueError("專案沒有影片")
-            for name, title in (("video", "影片"), ("backing", "伴奏")):
+            if not p.source:
+                raise ValueError("專案沒有錄音" if p.is_record else "專案沒有影片")
+            for name, title in (("video", "影片"), ("recording", "錄音"), ("backing", "伴奏")):
                 value = getattr(p, name)
-                if value and not Path(value).is_file():
+                if value and (name != "video" or not p.is_record) and not Path(value).is_file():
                     raise ValueError(f"找不到{title}：{value}\n請將原始檔移回原位置，或在 .saxproj 中更新路徑。")
-            vinfo = probe(p.video, cancel)
-            if not vinfo["video"] or not vinfo["audio"]:
-                raise ValueError("專案影片缺少畫面或音訊")
+            vinfo = probe(p.source, cancel)
+            if not vinfo["audio"] or (not p.is_record and not vinfo["video"]):
+                raise ValueError("專案錄音沒有聲音" if p.is_record else "專案影片缺少畫面或音訊")
             if abs(vinfo["duration"]-p.duration) > .5:
-                raise ValueError("影片長度與專案不同，原始檔可能已被修改")
-            vwave = waveform(p.video, cancel)
-            still = Path(self.temp.name)/"project-still.jpg"
-            thumbnail(p.video, still, cancel)
+                raise ValueError("錄音長度與專案不同，檔案可能已被修改" if p.is_record else "影片長度與專案不同，原始檔可能已被修改")
+            vwave = waveform(p.source, cancel)
+            still = None
+            if not p.is_record:
+                still = Path(self.temp.name)/"project-still.jpg"
+                thumbnail(p.video, still, cancel)
             bwave, bd, audible = np.array([]), 0, None
             if p.backing:
                 bd = probe(p.backing, cancel)["duration"]
                 bwave = waveform(p.backing, cancel)
                 audible = backing_range(p.backing, cancel)
-            return p, vwave, bwave, bd, str(still), audible
+            return p, vwave, bwave, bd, (str(still) if still else None), audible
         def done(result):
             (self.project, self.timeline.video_wave, self.timeline.back_wave,
              self.timeline.back_duration, still, self.backing_range) = result
@@ -1154,8 +1590,13 @@ class MainWindow(W.QMainWindow):
             self.preset_undo.setEnabled(False)
             self.project_path = path
             self.undo_stack.clear()
+            self.timeline.video_duration = None
             self.load_media(still)
             self.load_controls()
+            self.apply_mode()
+            if self.project.is_record:
+                self.record_panel.set_done(self.project.duration, self.project.recording)
+                self.record_offset_label.setText("已讀取儲存的位移 · 請播放核對")
             self.dirty = False
             self.preview_label.setText("按播放建立音效預覽")
             self.align_label.setText("已讀取儲存的位移 · 請播放核對")
@@ -1165,20 +1606,29 @@ class MainWindow(W.QMainWindow):
         self.launch(task, done)
 
     def export_dialog(self):
-        if self.busy or not self.project.video or not self.project.clips:
+        if self.busy or self.recording_active or not self.project.source or not self.project.clips:
             return
-        destination, selected_filter = W.QFileDialog.getSaveFileName(
-            self, "匯出混音成品", str(Path(self.project.video).with_name(Path(self.project.video).stem + "_混音")),
-            "MP4 影片 (*.mp4);;WAV 音訊 (*.wav);;MP3 音訊 (*.mp3)")
+        rec = self.project.is_record
+        base = Path(self.project.backing if rec and self.project.backing else self.project.source)
+        name = base.stem + ("_錄音混音" if rec else "_混音")
+        start = str((Path(self.project.source).parent if not rec else base.parent) / name)
+        filters = ("WAV 音訊 (*.wav);;MP3 音訊 (*.mp3)" if rec else
+                   "MP4 影片 (*.mp4);;WAV 音訊 (*.wav);;MP3 音訊 (*.mp3)")
+        destination, selected_filter = W.QFileDialog.getSaveFileName(self, "匯出混音成品", start, filters)
         if not destination:
             return
         if not Path(destination).suffix:
-            destination += ".wav" if selected_filter.startswith("WAV") else ".mp3" if selected_filter.startswith("MP3") else ".mp4"
+            destination += (".mp3" if selected_filter.startswith("MP3") else ".wav" if rec or selected_filter.startswith("WAV")
+                            else ".mp4")
         snapshot = copy.deepcopy(self.project)
         self.launch(lambda cancel, progress: export(snapshot, destination, cancel, progress),
                     lambda output: self.statusBar().showMessage(f"匯出完成：{output}"))
 
     def closeEvent(self, event):
+        if self.recording_active:
+            self.statusBar().showMessage("請先停止錄音再關閉")
+            event.ignore()
+            return
         if self.busy:
             self.statusBar().showMessage("請先取消作業，等待完成後再關閉")
             event.ignore()
@@ -1187,6 +1637,9 @@ class MainWindow(W.QMainWindow):
             event.ignore()
             return
         self.pause()
+        if self.session is not None:
+            self.session.cancel()
+            self.session.close_input()
         source(self.audio_player, "")
         source(self.video_player, "")
         try:

@@ -67,22 +67,32 @@ class Timeline(QtWidgets.QWidget):
         self.video_wave = np.array([])
         self.back_wave = np.array([])
         self.back_duration = 0
+        # Record mode: length of the track-1 waveform when it is still growing,
+        # and a display length while there is no recording yet (or during one).
+        self.video_duration = None
+        self.override_duration = None
+        self.empty_text = "匯入影片與伴奏後，波形會顯示在這裡"
         self.position = 0
         self.selected = -1
         self.setMinimumHeight(170)
         self.setMouseTracking(True)
         self.setToolTip("點擊波形移動播放位置並選取片段；青綠色為影片原音，金色為伴奏")
 
+    def total(self):
+        if self.override_duration:
+            return self.override_duration
+        return self.project.duration if self.project else 0
+
     def time_x(self, t):
-        return 12 + t/max(.001, self.project.duration)*max(1, self.width()-24)
+        return 12 + t/max(.001, self.total())*max(1, self.width()-24)
 
     def x_time(self, x):
         if not self.project:
             return 0
-        return max(0, min(self.project.duration, (x-12)/max(1, self.width()-24)*self.project.duration))
+        return max(0, min(self.total(), (x-12)/max(1, self.width()-24)*self.total()))
 
     def mousePressEvent(self, event):
-        if not self.project or not self.project.duration:
+        if not self.project or not self.project.duration or self.override_duration:
             return
         t = self.x_time(event.pos().x())
         self.selected = next((i for i, c in enumerate(self.project.clips) if c.start <= t <= c.end), -1)
@@ -97,11 +107,11 @@ class Timeline(QtWidgets.QWidget):
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor("#101b27"))
-        if not self.project or self.project.duration <= 0:
+        if not self.project or self.total() <= 0:
             p.setPen(QtGui.QColor("#7f92a8"))
-            p.drawText(self.rect(), QtCore.Qt.AlignCenter, "匯入影片與伴奏後，波形會顯示在這裡")
+            p.drawText(self.rect(), QtCore.Qt.AlignCenter, self.empty_text)
             return
-        d = self.project.duration
+        d = self.total()
         top = 27
         track_h = (self.height()-top-12)/2
         p.setPen(QtGui.QColor("#7f92a8"))
@@ -113,7 +123,7 @@ class Timeline(QtWidgets.QWidget):
             p.drawLine(QtCore.QPointF(x, top), QtCore.QPointF(x, self.height()-8))
             p.setPen(QtGui.QColor("#7f92a8"))
         for row, (wave, duration, offset, color) in enumerate([
-            (self.video_wave, d, 0, "#27c9c3"),
+            (self.video_wave, self.video_duration or self.project.duration, 0, "#27c9c3"),
             (self.back_wave, self.back_duration, self.project.offset, "#e9b853")]):
             mid = top+(row+.5)*track_h
             p.setPen(QtGui.QPen(QtGui.QColor(color), 1))
@@ -126,7 +136,10 @@ class Timeline(QtWidgets.QWidget):
                         p.drawLine(QtCore.QPointF(pixel, mid-height), QtCore.QPointF(pixel, mid+height))
         # Gray shading on deleted regions, selection outline on a retained clip.
         last = 0
-        for i, c in enumerate(self.project.clips):
+        clips = [] if self.override_duration else self.project.clips
+        if self.override_duration:
+            last = d
+        for i, c in enumerate(clips):
             if c.start > last:
                 p.fillRect(QtCore.QRectF(self.time_x(last), top, self.time_x(c.start)-self.time_x(last), self.height()-top), QtGui.QColor(6, 10, 16, 190))
             if i == self.selected:

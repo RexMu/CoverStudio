@@ -51,6 +51,10 @@ class UITests(unittest.TestCase):
         # actual widgets, worker handoff, settings, rendering and project editing.
         self.source_patch = patch("saxstudio.app.source")
         self.source_patch.start()
+        # Sound-card I/O is covered by tests/test_recorder.py with a simulated
+        # device; UI tests must never open the real microphone.
+        self.audio_patch = patch("saxstudio.recorder.audio_available", return_value=False)
+        self.audio_patch.start()
         QtCore.QSettings("SaxStudio", "SaxStudio").remove("ui/edits_expanded")
         self.window = MainWindow()
         self.errors = []
@@ -65,6 +69,7 @@ class UITests(unittest.TestCase):
         self.window.dirty = False
         self.window.close()
         self.source_patch.stop()
+        self.audio_patch.stop()
         self.app.processEvents()
 
     def wait_job(self):
@@ -405,9 +410,9 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.2")
+        self.assertEqual(VERSION_LABEL, "Beta V0.3")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
-        self.assertIn("Beta V0.2", self.window.windowTitle())
+        self.assertIn("Beta V0.3", self.window.windowTitle())
         sheet = style_sheet()
         self.assertNotIn("@UP@", sheet)
         for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):
@@ -418,6 +423,120 @@ with TemporaryDirectory() as config:
         self.assertEqual(splash.message, "正在建立主畫面…")
         self.assertFalse(splash.grab().isNull())
         splash.close()
+
+    def make_take(self, seconds=3.0):
+        rate = 48000
+        x = np.zeros(int(rate*seconds), np.float32)
+        x[rate:rate+4800] = .3*np.sin(2*np.pi*440*np.arange(4800)/rate)
+        path = self.root/"模擬錄音.wav"
+        wavfile.write(path, rate, x)
+        return path
+
+    def test_record_project_mode_panel_finish_save_reopen(self):
+        from saxstudio.recorder import TakeResult
+        w = self.window
+        self.assertIn("尚未建立", w.mode_badge.text())
+        with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(self.padded_backing), "")):
+            w.new_record_project()
+        self.wait_job()
+        self.assertTrue(w.project.is_record)
+        self.assertIn("錄音", w.mode_badge.text())
+        self.assertIs(w.right_stack.currentWidget(), w.record_scroll)
+        self.assertTrue(w.align_button.isHidden())
+        self.assertFalse(w.record_offset_label.isHidden())
+        self.assertIn("WAV", w.export_button.text())
+        self.assertEqual(w.track_names[0].text(), "第一軌 · 錄音")
+        self.assertFalse(w.play_button.isEnabled())
+        self.assertFalse(w.export_button.isEnabled())
+        self.assertAlmostEqual(w.timeline.override_duration, 4, delta=.05)
+        take = self.make_take()
+        w.finish_recording(TakeResult(str(take), 3.0, 48000, 1.25, .5))
+        self.wait_job()
+        p = w.project
+        self.assertEqual(p.recording, str(take))
+        self.assertAlmostEqual(p.duration, 3, delta=.01)
+        latency = (w.current_latency() or 0) / 1000
+        self.assertAlmostEqual(p.offset, 1.25 + latency, places=6)
+        self.assertAlmostEqual(w.offset.value(), (1.25 + latency) * 1000, places=3)
+        self.assertEqual(len(p.clips), 1)
+        self.assertIsNone(w.timeline.override_duration)
+        self.assertEqual(w.record_panel.states.currentIndex(), 2)
+        self.assertTrue(w.play_button.isEnabled())
+        # Auto trim works from the measured offset: backing audible 1-2 s.
+        w.pre_roll.setValue(.5)
+        w.post_roll.setValue(.25)
+        w.auto_trim()
+        self.assertAlmostEqual(p.clips[0].start, 1.25 + latency + 1 - .5, delta=.03)
+        w.prepare_preview(False)
+        self.wait_job()
+        self.assertTrue(Path(w.preview_path).is_file())
+        captured = {}
+        def save_name(*args):
+            captured["filter"] = args[3]
+            return ("", "")
+        with patch.object(QtWidgets.QFileDialog, "getSaveFileName", side_effect=save_name):
+            w.export_dialog()
+        self.assertNotIn("MP4", captured["filter"])
+        path = self.root/"錄音專案.saxproj"
+        with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(path), "")):
+            w.save_project()
+        self.assertFalse(w.dirty)
+        with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(path), "")):
+            w.open_project()
+        self.wait_job()
+        self.assertTrue(w.project.is_record)
+        self.assertEqual(w.project.recording, str(take.resolve()))
+        self.assertEqual(w.record_panel.states.currentIndex(), 2)
+        # A new video project switches the panel back.
+        w.dirty = False
+        self.import_video()
+        self.assertFalse(w.project.is_record)
+        self.assertIs(w.right_stack.currentWidget(), w.video_section)
+        self.assertFalse(w.align_button.isHidden())
+
+    def test_new_project_dialog_routes_to_mode(self):
+        from saxstudio.record_panel import NewProjectDialog
+        dialog = NewProjectDialog()
+        self.assertFalse(dialog.next_button.isEnabled())
+        dialog.cards["record"].click()
+        self.assertEqual(dialog.choice, "record")
+        self.assertTrue(dialog.cards["record"].isChecked())
+        self.assertFalse(dialog.cards["video"].isChecked())
+        self.assertTrue(dialog.next_button.isEnabled())
+        w = self.window
+        with patch("saxstudio.app.NewProjectDialog") as fake:
+            fake.return_value.exec.return_value = True
+            fake.return_value.exec_.return_value = True
+            fake.return_value.choice = "record"
+            with patch.object(w, "new_record_project") as record, patch.object(w, "import_video") as video:
+                w.new_project()
+                record.assert_called_once()
+                video.assert_not_called()
+
+    def test_record_panel_meter_and_progress(self):
+        from saxstudio.record_panel import RecordPanel, CalibrationDialog
+        panel = RecordPanel()
+        panel.set_level(.1)
+        self.assertIn("-20.0", panel.level_text.text())
+        panel.set_level(.999)
+        self.assertIn("破音", panel.clip_label.text())
+        panel.reset_clip()
+        self.assertIn("未破音", panel.clip_label.text())
+        panel.set_state("countdown")
+        panel.set_countdown(3)
+        panel.set_progress(1.2, -1)
+        self.assertEqual(panel.rec_time.text(), "3")
+        panel.set_countdown(0)
+        panel.set_progress(65.25, 10)
+        self.assertEqual(panel.rec_time.text(), "01:05.2")
+        self.assertFalse(panel.input_combo.isEnabled())
+        panel.set_latency(38.5)
+        self.assertIn("38.5", panel.latency_value.text())
+        dialog = CalibrationDialog(None)
+        dialog.show_result(38.5, .4, 8)
+        self.assertTrue(dialog.apply_button.isEnabled())
+        self.assertEqual(dialog.result_ms, 38.5)
+
 
 
 if __name__ == "__main__":
