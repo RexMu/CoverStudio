@@ -655,7 +655,8 @@ class MainWindow(W.QMainWindow):
         self.setStyleSheet(style_sheet())
         self.update_theme_button()
         for widget in [self, *self.findChildren(W.QWidget)]:
-            widget.update()
+            # Item views override update(index); call QWidget's repaint request directly.
+            W.QWidget.update(widget)
         self.statusBar().showMessage(f"已切換為{theme.NAMES[name]}")
 
     def setup_shortcuts(self):
