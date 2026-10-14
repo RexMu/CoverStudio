@@ -5,4 +5,4 @@ bash scripts/build-mac.sh
 status=$?
 echo ""
 read -r -p "按 Enter 關閉視窗…" _
-exit $status
+exit ${status}
