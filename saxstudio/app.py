@@ -7,9 +7,11 @@ from pathlib import Path
 
 import numpy as np
 
-from . import AUTHOR, VERSION_LABEL, __version__
+from . import AUTHOR, VERSION_LABEL, __version__, theme
 from .branding import APP_NAME, application_icon, asset_path, dark_palette
+from .edit_dialog import EditDialog
 from .effect_panels import CollapsibleEffect, PresetBar
+from .help_dialog import HelpDialog
 from .help_text import COMP_HELP, EQ_HELP, PRESETS, REVB_HELP
 from .alignment import align_files
 from .engine import audio_origin, export, render_mix
@@ -64,6 +66,9 @@ QPushButton#stopRecord { background: #2b3b4d; color: #ffffff; border: 1px solid 
 QPushButton#modeCard { text-align: left; padding: 16px; background: #182635; border: 1px solid #304359; border-radius: 10px; font-size: 13px; }
 QPushButton#modeCard:checked { background: #17333a; border: 2px solid #32d4ce; }
 QLabel#modeBadge { background: #0f1b27; border: 1px solid #304359; border-radius: 8px; padding: 6px 12px; font-weight: 600; }
+QPushButton#editButton { background: #17333a; border: 1px solid #24bdb9; font-weight: 700; }
+QPushButton#editButton:hover { background: #1d4249; }
+QPushButton#themeButton { border-radius: 16px; padding: 7px 14px; }
 QSplitter::handle { background: #1c2b3a; }
 QSplitter::handle:hover { background: #2ac5bf; }
 QToolButton#section { background: transparent; border: none; font-weight: 600; padding: 4px 2px; text-align: left; }
@@ -96,7 +101,7 @@ def style_sheet():
     for token, name in (("@UP@", "spin-up.png"), ("@UPD@", "spin-up-disabled.png"),
                         ("@DOWN@", "spin-down.png"), ("@DOWND@", "spin-down-disabled.png")):
         sheet = sheet.replace(token, asset_path(name).as_posix())
-    return sheet
+    return theme.css(sheet)
 
 
 def button(text, callback, primary=False):
@@ -170,6 +175,10 @@ class MainWindow(W.QMainWindow):
         self.pending_since = 0.0
         self.last_resync = 0.0
         self.settings = QtCore.QSettings("SaxStudio", "SaxStudio")
+        theme.set_theme(str(self.settings.value("ui/theme", theme.DARK)))
+        app = W.QApplication.instance()
+        if app is not None:
+            app.setPalette(dark_palette())
         self.setWindowTitle(f"{APP_NAME} {VERSION_LABEL}")
         self.setWindowIcon(application_icon())
         self.resize(1440, 980)
@@ -217,9 +226,12 @@ class MainWindow(W.QMainWindow):
         header.addWidget(label)
         version = W.QLabel(f"{VERSION_LABEL}  ·  {AUTHOR}")
         version.setObjectName("version")
-        version.setStyleSheet("color: #32d4ce; font-size: 12px; font-weight: 600; padding-left: 8px;")
+        theme.apply(version, "color: #32d4ce; font-size: 12px; font-weight: 600; padding-left: 8px;")
         header.addWidget(version)
         header.addStretch()
+        self.theme_button = button("", self.toggle_theme)
+        self.theme_button.setObjectName("themeButton")
+        header.addWidget(self.theme_button)
         self.export_button = button("匯出影片 / 音訊", self.export_dialog, True)
         header.addWidget(self.export_button)
         layout.addLayout(header)
@@ -240,6 +252,7 @@ class MainWindow(W.QMainWindow):
         reset_layout = button("重設版面", self.reset_layout)
         reset_layout.setToolTip("把效果區、影片區與音訊條恢復為預設大小")
         toolbar.addWidget(reset_layout)
+        toolbar.addWidget(button("功能說明", self.show_help))
         toolbar.addWidget(button("關於", self.show_about))
         layout.addLayout(toolbar)
         self.controls = W.QWidget()
@@ -252,7 +265,7 @@ class MainWindow(W.QMainWindow):
         fx_layout.setSpacing(8)
         fx_header = W.QHBoxLayout()
         fx_title = self.fx_title = W.QLabel("第一軌 · 影片原音 效果")
-        fx_title.setStyleSheet("color: #27c9c3; font-weight: 600;")
+        theme.apply(fx_title, "color: #27c9c3; font-weight: 600;")
         fx_title.setToolTip("EQ、壓縮、混響只處理影片原音；匯入的伴奏不會套用這些效果")
         fx_header.addWidget(fx_title)
         fx_header.addStretch()
@@ -357,7 +370,7 @@ class MainWindow(W.QMainWindow):
         self.video_empty = W.QLabel("影片預覽\n\n匯入演奏影片後，可在此核對聲畫")
         self.video_empty.setAlignment(QtCore.Qt.AlignCenter)
         self.video_empty.setObjectName("muted")
-        self.video_empty.setStyleSheet("background: #0b121c; color: #8498ae; border: 1px solid #304359; border-radius: 8px;")
+        theme.apply(self.video_empty, "background: #0b121c; color: #8498ae; border: 1px solid #304359; border-radius: 8px;")
         self.video_widget = QtMultimediaWidgets.QVideoWidget()
         self.video_widget.setMinimumSize(240, 135)
         self.video_stack.setMinimumSize(240, 135)
@@ -385,62 +398,6 @@ class MainWindow(W.QMainWindow):
         self.record_panel.calibrate_requested.connect(self.open_calibration)
         self.record_panel.play_requested.connect(self.toggle_play)
         self.record_panel.volume_changed.connect(self.on_record_volume)
-        edits = self.edits_frame = W.QFrame()
-        edits.setObjectName("card")
-        edits_outer = W.QVBoxLayout(edits)
-        edits_outer.setContentsMargins(10, 4, 10, 6)
-        edits_head = W.QHBoxLayout()
-        self.edits_toggle = W.QToolButton()
-        self.edits_toggle.setObjectName("section")
-        self.edits_toggle.setCheckable(True)
-        self.edits_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        self.edits_toggle.setToolTip("展開或收合時間剪輯工具（影片與伴奏同步剪輯）")
-        self.edits_toggle.toggled.connect(self.set_edits_expanded)
-        edits_head.addWidget(self.edits_toggle)
-        edits_head.addStretch()
-        self.edits_summary = W.QLabel("未剪輯")
-        self.edits_summary.setObjectName("muted")
-        edits_head.addWidget(self.edits_summary)
-        edits_outer.addLayout(edits_head)
-        self.edits_body = W.QWidget()
-        edits_layout = W.QVBoxLayout(self.edits_body)
-        edits_layout.setContentsMargins(0, 0, 0, 0)
-        edits_outer.addWidget(self.edits_body)
-        marks = W.QHBoxLayout()
-        self.mark_start = spin(0, 86400, 0, 3, " s")
-        self.mark_end = spin(0, 86400, 0, 3, " s")
-        marks.addWidget(button("起點 ←", lambda: self.mark_start.setValue(self.position)))
-        marks.addWidget(self.mark_start)
-        marks.addWidget(button("終點 ←", lambda: self.mark_end.setValue(self.position)))
-        marks.addWidget(self.mark_end)
-        edits_layout.addLayout(marks)
-        edit_buttons = W.QHBoxLayout()
-        for b in [button("保留起訖範圍", self.trim), button("分割", self.split), button("刪除片段", self.delete_clip)]:
-            edit_buttons.addWidget(b)
-        edits_layout.addLayout(edit_buttons)
-        auto_row = W.QHBoxLayout()
-        auto_row.addWidget(W.QLabel("自動裁剪保留：伴奏前"))
-        self.pre_roll = spin(0, 30, self.float_setting("edit/pre_roll", 3.0), 1, " s")
-        auto_row.addWidget(self.pre_roll)
-        auto_row.addWidget(W.QLabel("伴奏後"))
-        self.post_roll = spin(0, 30, self.float_setting("edit/post_roll", 2.0), 1, " s")
-        auto_row.addWidget(self.post_roll)
-        auto_row.addStretch()
-        self.pre_roll.valueChanged.connect(lambda v: self.settings.setValue("edit/pre_roll", v))
-        self.post_roll.valueChanged.connect(lambda v: self.settings.setValue("edit/post_roll", v))
-        edits_layout.addLayout(auto_row)
-        self.clip_list = W.QListWidget()
-        self.clip_list.setMaximumHeight(95)
-        self.clip_list.currentRowChanged.connect(self.select_clip)
-        edits_layout.addWidget(self.clip_list)
-        undo_row = W.QHBoxLayout()
-        self.undo_button = button("復原剪輯", self.undo)
-        undo_row.addWidget(self.undo_button)
-        undo_row.addWidget(button("重設剪輯", self.reset_edits))
-        self.duration_label = W.QLabel("輸出長度 00:00.000")
-        undo_row.addWidget(self.duration_label)
-        edits_layout.addLayout(undo_row)
-        right.addWidget(edits)
         self.h_split.addWidget(right_widget)
         self.h_split.setStretchFactor(0, 3)
         self.h_split.setStretchFactor(1, 2)
@@ -457,6 +414,13 @@ class MainWindow(W.QMainWindow):
         self.v_split.setStretchFactor(1, 1)
         controls_layout.addWidget(self.v_split, 1)
         align_row = W.QHBoxLayout()
+        self.edit_button = button("✂  時間剪輯…", self.open_edit_dialog)
+        self.edit_button.setObjectName("editButton")
+        self.edit_button.setToolTip("開啟時間剪輯視窗：看著畫面與波形設定起訖、分割、刪除片段")
+        align_row.addWidget(self.edit_button)
+        self.edits_summary = W.QLabel("未剪輯")
+        self.edits_summary.setObjectName("muted")
+        align_row.addWidget(self.edits_summary)
         self.align_button = button("自動對齊前奏", self.align)
         align_row.addWidget(self.align_button)
         self.autotrim_button = button("依伴奏自動裁剪", self.auto_trim)
@@ -488,7 +452,7 @@ class MainWindow(W.QMainWindow):
             frame.setObjectName("card")
             f = W.QVBoxLayout(frame)
             name = W.QLabel(label)
-            name.setStyleSheet(f"color: {color}; font-weight: 600;")
+            theme.apply(name, f"color: {color}; font-weight: 600;")
             head = W.QHBoxLayout()
             head.addWidget(name)
             head.addStretch()
@@ -523,6 +487,7 @@ class MainWindow(W.QMainWindow):
         self.timeline.seek.connect(self.seek)
         self.timeline.select.connect(self.clip_list.setCurrentRow)
         tracks.addWidget(self.timeline, 1)
+        self.build_edit_dialog()
         lower.addLayout(tracks, 1)
         layout.addWidget(self.controls, 1)
         transport = W.QHBoxLayout()
@@ -560,10 +525,7 @@ class MainWindow(W.QMainWindow):
         layout.addLayout(busy_row)
         self.eq_toggle.toggled.connect(self.change_effects)
         self.highpass.valueChanged.connect(self.change_effects)
-        expanded = self.settings.value("ui/edits_expanded", False)
-        expanded = expanded if isinstance(expanded, bool) else str(expanded).lower() == "true"
-        self.edits_toggle.setChecked(expanded)
-        self.set_edits_expanded(expanded)
+        self.update_theme_button()
         self.restore_layout()
         self.h_split.splitterMoved.connect(lambda *a: self.save_layout())
         self.v_split.splitterMoved.connect(lambda *a: self.save_layout())
@@ -605,15 +567,96 @@ class MainWindow(W.QMainWindow):
             "<p>薩克斯風翻奏影片／伴奏混音工作室。所有影音處理都在本機執行。</p>"
             "<p style='color:#91a4b9'>使用 Qt (PySide6)、NumPy、SciPy 與 FFmpeg；授權資訊見隨附的 THIRD_PARTY.md。</p>"))
 
-    def set_edits_expanded(self, expanded, remember=True):
-        self.edits_body.setVisible(expanded)
-        self.edits_toggle.setText(("▾" if expanded else "▸") + "  ✂ 時間剪輯")
-        if self.edits_toggle.isChecked() != expanded:
-            self.edits_toggle.blockSignals(True)
-            self.edits_toggle.setChecked(expanded)
-            self.edits_toggle.blockSignals(False)
-        if remember:
-            self.settings.setValue("ui/edits_expanded", expanded)
+    def build_edit_dialog(self):
+        dlg = self.edit_dialog = EditDialog(self.timeline, self)
+        self.edit_timeline = dlg.timeline
+        self.mark_start, self.mark_end = dlg.mark_start, dlg.mark_end
+        self.clip_list, self.undo_button = dlg.clip_list, dlg.undo_button
+        self.duration_label = dlg.duration_label
+        self.pre_roll, self.post_roll = dlg.pre_roll, dlg.post_roll
+        self.pre_roll.setValue(self.float_setting("edit/pre_roll", 3.0))
+        self.post_roll.setValue(self.float_setting("edit/post_roll", 2.0))
+        self.pre_roll.valueChanged.connect(lambda v: self.settings.setValue("edit/pre_roll", v))
+        self.post_roll.valueChanged.connect(lambda v: self.settings.setValue("edit/post_roll", v))
+        dlg.start_button.clicked.connect(lambda: self.mark_start.setValue(self.position))
+        dlg.end_button.clicked.connect(lambda: self.mark_end.setValue(self.position))
+        dlg.trim_button.clicked.connect(self.trim)
+        dlg.split_button.clicked.connect(self.split)
+        dlg.delete_button.clicked.connect(self.delete_clip)
+        dlg.autotrim_button.clicked.connect(self.auto_trim)
+        dlg.undo_button.clicked.connect(self.undo)
+        dlg.reset_button.clicked.connect(self.reset_edits)
+        dlg.play_button.clicked.connect(self.toggle_play)
+        dlg.prev_button.clicked.connect(lambda: self.step_frame(-1))
+        dlg.next_button.clicked.connect(lambda: self.step_frame(1))
+        self.clip_list.currentRowChanged.connect(self.select_clip)
+        self.edit_timeline.seek.connect(self.seek)
+        self.edit_timeline.select.connect(self.clip_list.setCurrentRow)
+        dlg.finished.connect(self.edit_dialog_closed)
+        shortcut_type = QtGui.QShortcut if QT6 else W.QShortcut
+        for key, fn in (("Ctrl+B", self.split), ("Ctrl+Z", self.undo)):
+            shortcut_type(QtGui.QKeySequence(key), dlg).activated.connect(fn)
+        self.edit_snapshot = None
+
+    def open_edit_dialog(self):
+        if self.busy or self.recording_active or not self.project.source or self.edit_dialog.isVisible():
+            return
+        self.edit_snapshot = (copy.deepcopy(self.project.clips), copy.deepcopy(self.undo_stack), self.dirty,
+                              self.windowTitle())
+        rec = self.project.is_record
+        if not rec and not self.video_failed:
+            self.video_player.setVideoOutput(self.edit_dialog.video_widget)
+            self.edit_dialog.show_video(True)
+        else:
+            self.edit_dialog.show_video(False, "錄音模式沒有畫面，請以波形與播放聲音剪輯" if rec else
+                                        "影片預覽無法播放，仍可用波形剪輯")
+        self.refresh()
+        self.edit_dialog.open()
+        self.edit_dialog.set_zoom(self.edit_dialog.zoom.value())
+        self.seek(self.position)
+
+    def edit_dialog_closed(self, result):
+        snapshot, self.edit_snapshot = self.edit_snapshot, None
+        if int(result) != 1 and snapshot is not None:  # 1 = QDialog.Accepted
+            # 取消：放棄這次在視窗裡做的剪輯。
+            self.pause()
+            clips, undo, dirty, title = snapshot
+            self.project.clips, self.undo_stack, self.dirty = clips, undo, dirty
+            self.setWindowTitle(title)
+            self.statusBar().showMessage("已取消這次的剪輯")
+        if not self.project.is_record:
+            self.video_player.setVideoOutput(self.video_widget)
+        self.refresh()
+        self.seek(self.position)
+
+    def step_frame(self, direction):
+        self.pause()
+        self.seek(self.position + direction / 30)
+
+    def show_help(self):
+        dialog = HelpDialog(self)
+        dialog.exec() if QT6 else dialog.exec_()
+
+    def update_theme_button(self):
+        if theme.is_light():
+            self.theme_button.setText("☾  暗色")
+            self.theme_button.setToolTip("切換成暗色")
+        else:
+            self.theme_button.setText("☀  米黃亮色")
+            self.theme_button.setToolTip("切換成米黃亮色")
+
+    def toggle_theme(self):
+        name = theme.DARK if theme.is_light() else theme.LIGHT
+        self.settings.setValue("ui/theme", name)
+        theme.set_theme(name)
+        app = W.QApplication.instance()
+        if app is not None:
+            app.setPalette(dark_palette())
+        self.setStyleSheet(style_sheet())
+        self.update_theme_button()
+        for widget in [self, *self.findChildren(W.QWidget)]:
+            widget.update()
+        self.statusBar().showMessage(f"已切換為{theme.NAMES[name]}")
 
     def setup_shortcuts(self):
         shortcut_type = QtGui.QShortcut if QT6 else W.QShortcut
@@ -857,7 +900,7 @@ class MainWindow(W.QMainWindow):
         self.timeline.update()
 
     def set_recording_ui(self, active):
-        for widget in (self.h_split.widget(0), self.edits_frame, self.lower_widget):
+        for widget in (self.h_split.widget(0), self.lower_widget):
             widget.setEnabled(not active)
 
     def update_record_buttons(self):
@@ -1305,6 +1348,7 @@ class MainWindow(W.QMainWindow):
         self.audio_player.play()
         self.playing = True
         self.play_button.setText("Ⅱ 暫停")
+        self.edit_dialog.play_button.setText("Ⅱ 暫停")
 
     def pause(self):
         if hasattr(self, "video_player"):
@@ -1314,6 +1358,8 @@ class MainWindow(W.QMainWindow):
         self.pending_play = False
         if hasattr(self, "play_button"):
             self.play_button.setText("▶ 播放")
+        if hasattr(self, "edit_dialog"):
+            self.edit_dialog.play_button.setText("▶ 播放")
 
     def stop(self):
         if self.busy:
@@ -1334,9 +1380,7 @@ class MainWindow(W.QMainWindow):
         self.video_player.setPosition(round(self.position*1000))
         self.audio_player.setPosition(round(self.position*1000))
         self.jumping = False
-        self.timeline.position = self.position
-        self.timeline.update()
-        self.time_label.setText(f"原片時間 {clock(self.position)}")
+        self.show_position()
 
     def on_position(self, milliseconds):
         if self.jumping:
@@ -1352,9 +1396,20 @@ class MainWindow(W.QMainWindow):
                     self.pause()
                     self.seek(self.project.clips[-1].end if self.project.clips else 0)
                     return
-        self.timeline.position = self.position
-        self.timeline.update()
+        self.show_position()
+
+    def show_position(self):
+        for view in (self.timeline, self.edit_timeline):
+            view.position = self.position
+            view.update()
         self.time_label.setText(f"原片時間 {clock(self.position)}")
+        self.edit_dialog.time_label.setText(f"{clock(self.position)} / {clock(self.project.duration)}")
+        if self.edit_dialog.isVisible() and self.project.duration > 0:
+            # Keep the playhead in view when the waveform is zoomed in.
+            bar = self.edit_dialog.timeline_scroll.horizontalScrollBar()
+            x = self.edit_timeline.time_x(self.position)
+            if not bar.value() <= x <= bar.value() + bar.pageStep():
+                bar.setValue(int(x - bar.pageStep() * .2))
 
     def sync_players(self):
         if self.pending_play and not self.busy:
@@ -1418,7 +1473,6 @@ class MainWindow(W.QMainWindow):
         self.undo_stack.append(snapshot)
         self.mark_start.setValue(start)
         self.mark_end.setValue(end)
-        self.set_edits_expanded(True, remember=False)
         self.mark_dirty()
         self.refresh()
         self.seek(start)
@@ -1444,7 +1498,6 @@ class MainWindow(W.QMainWindow):
             return
         snapshot = copy.deepcopy(self.project.clips)
         if self.project.split(self.position):
-            self.set_edits_expanded(True, remember=False)
             self.pause()
             self.undo_stack.append(snapshot)
             self.mark_dirty()
@@ -1463,7 +1516,6 @@ class MainWindow(W.QMainWindow):
 
     def undo(self):
         if self.undo_stack and not self.busy:
-            self.set_edits_expanded(True, remember=False)
             self.pause()
             self.project.clips = self.undo_stack.pop()
             self.mark_dirty()
@@ -1480,8 +1532,9 @@ class MainWindow(W.QMainWindow):
         self.refresh()
 
     def select_clip(self, index):
-        self.timeline.selected = index
-        self.timeline.update()
+        for view in (self.timeline, self.edit_timeline):
+            view.selected = index
+            view.update()
 
     def refresh(self):
         has = bool(self.project.source)
@@ -1507,9 +1560,12 @@ class MainWindow(W.QMainWindow):
             self.clip_list.addItem(f"{i+1:02}    {clock(c.start)} → {clock(c.end)}    ·    {c.end-c.start:.2f} s")
         self.clip_list.setCurrentRow(min(selected, len(self.project.clips)-1))
         self.clip_list.blockSignals(False)
-        self.timeline.selected = self.clip_list.currentRow()
-        self.timeline.project = self.project
-        self.timeline.update()
+        for view in (self.timeline, self.edit_timeline):
+            view.selected = self.clip_list.currentRow()
+            view.project = self.project
+            view.update()
+        self.edit_button.setEnabled(has and idle)
+        self.edit_dialog.autotrim_button.setEnabled(self.autotrim_button.isEnabled())
         self.duration_label.setText(f"輸出 {clock(self.project.output_duration)}")
         whole = [Clip(0, self.project.duration)]
         if not has:

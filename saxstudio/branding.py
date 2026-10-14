@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import sys
 
-from . import AUTHOR, VERSION_LABEL
+from . import AUTHOR, VERSION_LABEL, theme
 from .qt import QT6, QtCore, QtGui, QtWidgets
 
 APP_NAME = "Sax Cover Studio"
@@ -37,13 +37,14 @@ def set_windows_identity():
 
 
 def dark_palette():
+    """Application palette for the active theme (name kept for compatibility)."""
     palette = QtGui.QPalette()
     roles = QtGui.QPalette.ColorRole if QT6 else QtGui.QPalette
     for role, color in [("Window", "#101923"), ("WindowText", "#e5edf7"), ("Base", "#101d2b"),
                         ("AlternateBase", "#182635"), ("Text", "#e5edf7"), ("Button", "#24384c"),
                         ("ButtonText", "#e5edf7"), ("Highlight", "#28646a"), ("HighlightedText", "#ffffff"),
                         ("ToolTipBase", "#253d51"), ("ToolTipText", "#eff7ff")]:
-        palette.setColor(getattr(roles, role), QtGui.QColor(color))
+        palette.setColor(getattr(roles, role), QtGui.QColor(theme.c(color)))
     return palette
 
 

@@ -1,11 +1,11 @@
-#define AppVersion "0.3"
+#define AppVersion "0.4"
 [Setup]
 AppId={{5F1C5C9C-BCF7-49D7-9208-F14D2072C61A}
 AppName=Sax Cover Studio
 AppVersion={#AppVersion}
 AppVerName=Sax Cover Studio Beta V{#AppVersion}
 AppPublisher=Rex Mu | RexFactory
-VersionInfoVersion=0.3.0.0
+VersionInfoVersion=0.4.0.0
 DefaultDirName={localappdata}\Programs\Sax Cover Studio
 DefaultGroupName=Sax Cover Studio
 PrivilegesRequired=lowest

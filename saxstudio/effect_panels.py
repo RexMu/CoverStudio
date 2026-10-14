@@ -1,5 +1,6 @@
 """Presentation-only controls for the existing effect settings."""
 from .qt import QtCore, QtGui, QtWidgets, Signal
+from . import theme
 
 
 class ToggleSwitch(QtWidgets.QCheckBox):
@@ -20,15 +21,15 @@ class ToggleSwitch(QtWidgets.QCheckBox):
         if not self.isEnabled():
             painter.setOpacity(.45)
         checked = self.isChecked()
-        painter.setPen(QtGui.QPen(QtGui.QColor("#2ac5bf" if checked else "#5b6c7f"), 1))
-        painter.setBrush(QtGui.QColor("#2ac5bf" if checked else "#3a4b5e"))
+        painter.setPen(QtGui.QPen(QtGui.QColor(theme.c("#2ac5bf" if checked else "#5b6c7f")), 1))
+        painter.setBrush(QtGui.QColor(theme.c("#2ac5bf" if checked else "#3a4b5e")))
         painter.drawRoundedRect(QtCore.QRectF(1, 3, 36, 18), 9, 9)
         painter.setPen(QtCore.Qt.NoPen)
-        painter.setBrush(QtGui.QColor("#0d393c" if checked else "#d9e4ec"))
+        painter.setBrush(QtGui.QColor(theme.c("#0d393c" if checked else "#d9e4ec")))
         painter.drawEllipse(QtCore.QRectF(21 if checked else 4, 5, 14, 14))
         if self.hasFocus():
             painter.setBrush(QtCore.Qt.NoBrush)
-            painter.setPen(QtGui.QPen(QtGui.QColor("#78eee4"), 1))
+            painter.setPen(QtGui.QPen(QtGui.QColor(theme.c("#78eee4")), 1))
             painter.drawRoundedRect(QtCore.QRectF(.5, .5, 37, 23), 10, 10)
 
 
@@ -53,7 +54,7 @@ class InfoButton(QtWidgets.QToolButton):
         popup.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         layout = QtWidgets.QVBoxLayout(popup)
         layout.setContentsMargins(14, 12, 14, 12)
-        text = QtWidgets.QLabel(f"<b style='font-size:14px'>{self.title}</b>{self.html}")
+        text = QtWidgets.QLabel(theme.css(f"<b style='font-size:14px'>{self.title}</b>{self.html}"))
         text.setObjectName("infoText")
         text.setWordWrap(True)
         text.setTextFormat(QtCore.Qt.RichText)
@@ -140,7 +141,7 @@ class CollapsibleEffect(QtWidgets.QFrame):
         labels = QtWidgets.QVBoxLayout()
         labels.setSpacing(2)
         self.title = QtWidgets.QLabel(name)
-        self.title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        theme.apply(self.title, "font-size: 14px; font-weight: 600;")
         self.status = QtWidgets.QLabel("未啟用")
         title_row = QtWidgets.QHBoxLayout()
         title_row.setSpacing(6)
@@ -175,7 +176,7 @@ class CollapsibleEffect(QtWidgets.QFrame):
     def update_enabled(self, enabled):
         self.body.setEnabled(enabled)
         self.status.setText("已啟用" if enabled else "未啟用")
-        self.status.setStyleSheet("font-size: 11px; color: " + ("#32d4ce" if enabled else "#91a4b9") + ";")
+        theme.apply(self.status, "font-size: 11px; color: " + ("#32d4ce" if enabled else "#91a4b9") + ";")
 
     def set_expanded(self, expanded):
         self.body.setVisible(expanded)

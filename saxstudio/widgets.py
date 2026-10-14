@@ -4,6 +4,7 @@ import numpy as np
 from scipy import signal
 
 from .qt import QtCore, QtGui, QtWidgets, Signal
+from . import theme
 
 
 class EQGraph(QtWidgets.QWidget):
@@ -16,22 +17,22 @@ class EQGraph(QtWidgets.QWidget):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         r = self.rect().adjusted(40, 12, -16, -26)
-        p.fillRect(self.rect(), QtGui.QColor("#101b27"))
-        p.setPen(QtGui.QColor("#263749"))
+        p.fillRect(self.rect(), QtGui.QColor(theme.c("#101b27")))
+        p.setPen(QtGui.QColor(theme.c("#263749")))
         for gain in (-18, -9, 0, 9, 18):
             y = r.top() + (18-gain)/36*r.height()
             p.drawLine(QtCore.QPointF(r.left(), y), QtCore.QPointF(r.right(), y))
-            p.setPen(QtGui.QColor("#8d9fb3"))
+            p.setPen(QtGui.QColor(theme.c("#8d9fb3")))
             p.drawText(0, int(y)-7, 36, 16, QtCore.Qt.AlignRight, str(gain))
-            p.setPen(QtGui.QColor("#263749"))
+            p.setPen(QtGui.QColor(theme.c("#263749")))
         def xpos(hz):
             return r.left() + np.log(hz/20)/np.log(1000)*r.width()
         for hz, text in [(20, "20"), (100, "100"), (1000, "1k"), (10000, "10k"), (20000, "20k Hz")]:
             x = xpos(hz)
             p.drawLine(QtCore.QPointF(x, r.top()), QtCore.QPointF(x, r.bottom()))
-            p.setPen(QtGui.QColor("#8d9fb3"))
+            p.setPen(QtGui.QColor(theme.c("#8d9fb3")))
             p.drawText(int(x)-20, r.bottom()+5, 45, 18, QtCore.Qt.AlignCenter, text)
-            p.setPen(QtGui.QColor("#263749"))
+            p.setPen(QtGui.QColor(theme.c("#263749")))
         if not self.effects:
             return
         freqs = np.geomspace(20, 20000, 360)
@@ -53,7 +54,7 @@ class EQGraph(QtWidgets.QWidget):
         for i, (hz, value) in enumerate(zip(freqs, db)):
             point = QtCore.QPointF(xpos(hz), r.top()+(18-value)/36*r.height())
             path.moveTo(point) if i == 0 else path.lineTo(point)
-        p.setPen(QtGui.QPen(QtGui.QColor("#32d4ce"), 2))
+        p.setPen(QtGui.QPen(QtGui.QColor(theme.c("#32d4ce")), 2))
         p.drawPath(path)
 
 
@@ -106,27 +107,27 @@ class Timeline(QtWidgets.QWidget):
 
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
-        p.fillRect(self.rect(), QtGui.QColor("#101b27"))
+        p.fillRect(self.rect(), QtGui.QColor(theme.c("#101b27")))
         if not self.project or self.total() <= 0:
-            p.setPen(QtGui.QColor("#7f92a8"))
+            p.setPen(QtGui.QColor(theme.c("#7f92a8")))
             p.drawText(self.rect(), QtCore.Qt.AlignCenter, self.empty_text)
             return
         d = self.total()
         top = 27
         track_h = (self.height()-top-12)/2
-        p.setPen(QtGui.QColor("#7f92a8"))
+        p.setPen(QtGui.QColor(theme.c("#7f92a8")))
         for t in np.linspace(0, d, 9):
             x = self.time_x(t)
             text = f"{t:.1f}s" if d < 16 else f"{int(t)//60}:{int(t)%60:02}"
             p.drawText(int(x)-22, 2, 48, 20, QtCore.Qt.AlignCenter, text)
-            p.setPen(QtGui.QColor("#223344"))
+            p.setPen(QtGui.QColor(theme.c("#223344")))
             p.drawLine(QtCore.QPointF(x, top), QtCore.QPointF(x, self.height()-8))
-            p.setPen(QtGui.QColor("#7f92a8"))
+            p.setPen(QtGui.QColor(theme.c("#7f92a8")))
         for row, (wave, duration, offset, color) in enumerate([
             (self.video_wave, self.video_duration or self.project.duration, 0, "#27c9c3"),
             (self.back_wave, self.back_duration, self.project.offset, "#e9b853")]):
             mid = top+(row+.5)*track_h
-            p.setPen(QtGui.QPen(QtGui.QColor(color), 1))
+            p.setPen(QtGui.QPen(QtGui.QColor(theme.c(color)), 1))
             if len(wave):
                 for pixel in range(12, self.width()-12):
                     t = self.x_time(pixel)-offset
@@ -141,14 +142,14 @@ class Timeline(QtWidgets.QWidget):
             last = d
         for i, c in enumerate(clips):
             if c.start > last:
-                p.fillRect(QtCore.QRectF(self.time_x(last), top, self.time_x(c.start)-self.time_x(last), self.height()-top), QtGui.QColor(6, 10, 16, 190))
+                p.fillRect(QtCore.QRectF(self.time_x(last), top, self.time_x(c.start)-self.time_x(last), self.height()-top), QtGui.QColor(*theme.shade()))
             if i == self.selected:
-                p.setPen(QtGui.QPen(QtGui.QColor("#d7e7fa"), 1))
+                p.setPen(QtGui.QPen(QtGui.QColor(theme.c("#d7e7fa")), 1))
                 p.drawRect(QtCore.QRectF(self.time_x(c.start), top, self.time_x(c.end)-self.time_x(c.start), self.height()-top-2))
             last = c.end
         if last < d:
-            p.fillRect(QtCore.QRectF(self.time_x(last), top, self.time_x(d)-self.time_x(last), self.height()-top), QtGui.QColor(6, 10, 16, 190))
-        p.setPen(QtGui.QPen(QtGui.QColor("#fafcff"), 2))
+            p.fillRect(QtCore.QRectF(self.time_x(last), top, self.time_x(d)-self.time_x(last), self.height()-top), QtGui.QColor(*theme.shade()))
+        p.setPen(QtGui.QPen(QtGui.QColor(theme.c("#fafcff")), 2))
         x = self.time_x(self.position)
         p.drawLine(QtCore.QPointF(x, top-4), QtCore.QPointF(x, self.height()))
 
@@ -169,3 +170,30 @@ class Worker(QtCore.QThread):
             self.result.emit(self.function(self.cancel, self.progress.emit))
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class MirrorTimeline(Timeline):
+    """A second view of the main timeline (used in the edit window).
+
+    Waveform data lives on the master so both views always show the same
+    material; position, selection and size are per view.
+    """
+
+    def __init__(self, master, parent=None):
+        super().__init__(parent)  # its default assignments hit the no-op setters
+        self._master = master
+        self.setMinimumHeight(190)
+
+
+def _shared(name):
+    def get(self):
+        return getattr(self._master, name)
+
+    def set_(self, value):
+        pass  # the master owns the data; Timeline.__init__ defaults are ignored
+    return property(get, set_)
+
+
+for _name in ("video_wave", "back_wave", "back_duration", "video_duration",
+              "override_duration", "empty_text"):
+    setattr(MirrorTimeline, _name, _shared(_name))

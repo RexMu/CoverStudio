@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 
 from .qt import QtCore, QtGui, QtWidgets as W, Signal
+from . import theme
 
 
 def db(value):
@@ -59,7 +60,7 @@ class LevelMeter(W.QWidget):
             else:
                 color = "#2ac5bf"
             on = i < lit or i == hold
-            p.setBrush(QtGui.QColor(color if on else "#22344a"))
+            p.setBrush(QtGui.QColor(theme.c(color if on else "#22344a")))
             p.setPen(QtCore.Qt.NoPen)
             p.drawRoundedRect(QtCore.QRectF(i * (width + gap), 0, width, self.height()), 2, 2)
 
@@ -92,7 +93,7 @@ class RecordPanel(W.QFrame):
         layout.setSpacing(10)
         head = W.QHBoxLayout()
         title = W.QLabel("● 錄音")
-        title.setStyleSheet("font-size: 15px; font-weight: 700; color: #ff8a7a;")
+        theme.apply(title, "font-size: 15px; font-weight: 700; color: #ff8a7a;")
         head.addWidget(title)
         head.addStretch()
         self.format_label = W.QLabel("48 kHz · 32-bit 浮點 · 單聲道")
@@ -132,7 +133,7 @@ class RecordPanel(W.QFrame):
             if i:
                 scale.addStretch()
             mark = W.QLabel(text)
-            mark.setStyleSheet("color: #6f8396; font-size: 10px;")
+            theme.apply(mark, "color: #6f8396; font-size: 10px;")
             scale.addWidget(mark)
         layout.addLayout(scale)
         self.clip_label = W.QLabel("試吹一下，讓音量落在黃色區域之前")
@@ -155,14 +156,14 @@ class RecordPanel(W.QFrame):
 
         latency = W.QFrame()
         latency.setObjectName("latencyBox")
-        latency.setStyleSheet("QFrame#latencyBox { background: #132232; border: 1px solid #2c4156; border-radius: 6px; }")
+        theme.apply(latency, "QFrame#latencyBox { background: #132232; border: 1px solid #2c4156; border-radius: 6px; }")
         row = W.QHBoxLayout(latency)
         row.setContentsMargins(10, 6, 10, 6)
         label = W.QLabel("延遲補償")
         label.setObjectName("muted")
         row.addWidget(label)
         self.latency_value = W.QLabel("尚未校正")
-        self.latency_value.setStyleSheet("font-weight: 600;")
+        theme.apply(self.latency_value, "font-weight: 600;")
         row.addWidget(self.latency_value)
         row.addStretch()
         self.calibrate_button = W.QPushButton("校正")
@@ -189,10 +190,10 @@ class RecordPanel(W.QFrame):
         box.setContentsMargins(0, 0, 0, 0)
         status = W.QHBoxLayout()
         self.rec_state = W.QLabel("● 錄音中")
-        self.rec_state.setStyleSheet("color: #ff8a7a; font-weight: 700;")
+        theme.apply(self.rec_state, "color: #ff8a7a; font-weight: 700;")
         status.addWidget(self.rec_state)
         self.rec_time = W.QLabel("00:00.0")
-        self.rec_time.setStyleSheet("font-size: 18px; font-weight: 600;")
+        theme.apply(self.rec_time, "font-size: 18px; font-weight: 600;")
         status.addWidget(self.rec_time)
         status.addStretch()
         self.rec_left = W.QLabel("")
@@ -213,7 +214,7 @@ class RecordPanel(W.QFrame):
         box = W.QVBoxLayout(done)
         box.setContentsMargins(0, 0, 0, 0)
         self.done_label = W.QLabel("")
-        self.done_label.setStyleSheet("color: #32d4ce; font-weight: 700;")
+        theme.apply(self.done_label, "color: #32d4ce; font-weight: 700;")
         self.done_label.setWordWrap(True)
         box.addWidget(self.done_label)
         buttons = W.QHBoxLayout()
@@ -235,7 +236,7 @@ class RecordPanel(W.QFrame):
         layout.addWidget(self.states)
         self.unavailable = W.QLabel("")
         self.unavailable.setWordWrap(True)
-        self.unavailable.setStyleSheet("color: #ffb5ac;")
+        theme.apply(self.unavailable, "color: #ffb5ac;")
         self.unavailable.hide()
         layout.addWidget(self.unavailable)
         layout.addStretch()
@@ -260,21 +261,21 @@ class RecordPanel(W.QFrame):
         self.level_text.setText(f"{db(peak):.1f} dB")
         if self.meter.clipped:
             self.clip_label.setText("⚠ 破音了！請調低錄音介面的輸入增益")
-            self.clip_label.setStyleSheet("color: #ff8a7a; font-weight: 600;")
+            theme.apply(self.clip_label, "color: #ff8a7a; font-weight: 600;")
 
     def reset_clip(self):
         self.meter.reset_clip()
         self.clip_label.setText("音量良好，未破音")
-        self.clip_label.setStyleSheet("color: #32d4ce;")
+        theme.apply(self.clip_label, "color: #32d4ce;")
 
     def set_latency(self, ms):
         if ms is None:
             self.latency_value.setText("尚未校正")
-            self.latency_value.setStyleSheet("font-weight: 600; color: #e9b853;")
+            theme.apply(self.latency_value, "font-weight: 600; color: #e9b853;")
             self.calibrate_button.setText("校正")
         else:
             self.latency_value.setText(f"{ms:.1f} ms · 已校正")
-            self.latency_value.setStyleSheet("font-weight: 600; color: #32d4ce;")
+            theme.apply(self.latency_value, "font-weight: 600; color: #32d4ce;")
             self.calibrate_button.setText("重新校正")
 
     def set_state(self, state):
@@ -329,7 +330,7 @@ class NewProjectDialog(W.QDialog):
         layout.setContentsMargins(24, 22, 24, 20)
         layout.setSpacing(16)
         title = W.QLabel("開始新專案")
-        title.setStyleSheet("font-size: 20px; font-weight: 700;")
+        theme.apply(title, "font-size: 20px; font-weight: 700;")
         layout.addWidget(title)
         hint = W.QLabel("選擇第一軌的來源。模式建立後不會改變，要換模式請開新專案。")
         hint.setObjectName("muted")
@@ -382,7 +383,7 @@ class CalibrationDialog(W.QDialog):
         layout.setContentsMargins(24, 22, 24, 20)
         layout.setSpacing(12)
         title = W.QLabel("錄音延遲校正")
-        title.setStyleSheet("font-size: 20px; font-weight: 700;")
+        theme.apply(title, "font-size: 20px; font-weight: 700;")
         layout.addWidget(title)
         intro = W.QLabel("聲音送到耳機、再從麥克風收回來會有一點延遲。換了錄音介面或耳機時做一次，"
                          "程式會記住結果，之後每次錄音自動補償。")
@@ -398,7 +399,7 @@ class CalibrationDialog(W.QDialog):
             step.setTextFormat(QtCore.Qt.RichText)
             layout.addWidget(step)
         self.result = W.QLabel("尚未測量" if current_ms is None else f"目前設定：{current_ms:.1f} ms")
-        self.result.setStyleSheet("font-size: 16px; font-weight: 600; color: #32d4ce;")
+        theme.apply(self.result, "font-size: 16px; font-weight: 600; color: #32d4ce;")
         self.result.setWordWrap(True)
         layout.addWidget(self.result)
         buttons = W.QHBoxLayout()
@@ -423,13 +424,13 @@ class CalibrationDialog(W.QDialog):
         self.measure_button.setEnabled(False)
         self.apply_button.setEnabled(False)
         self.result.setText("測量中…請保持安靜")
-        self.result.setStyleSheet("font-size: 16px; font-weight: 600; color: #e9b853;")
+        theme.apply(self.result, "font-size: 16px; font-weight: 600; color: #e9b853;")
         self.measure_requested.emit()
 
     def show_result(self, median, spread, found):
         self.result_ms = median
         self.result.setText(f"量到的延遲：{median:.1f} ms　（{found} 聲偵測到 · 誤差 ±{spread:.1f} ms）")
-        self.result.setStyleSheet("font-size: 16px; font-weight: 600; color: #32d4ce;")
+        theme.apply(self.result, "font-size: 16px; font-weight: 600; color: #32d4ce;")
         self.measure_button.setText("重新測量")
         self.measure_button.setEnabled(True)
         self.apply_button.setText(f"套用 {median:.1f} ms")
@@ -437,7 +438,7 @@ class CalibrationDialog(W.QDialog):
 
     def show_error(self, text):
         self.result.setText(text)
-        self.result.setStyleSheet("font-size: 14px; font-weight: 600; color: #ff8a7a;")
+        theme.apply(self.result, "font-size: 14px; font-weight: 600; color: #ff8a7a;")
         self.measure_button.setText("重新測量")
         self.measure_button.setEnabled(True)
 

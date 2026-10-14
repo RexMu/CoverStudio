@@ -55,7 +55,10 @@ class UITests(unittest.TestCase):
         # device; UI tests must never open the real microphone.
         self.audio_patch = patch("saxstudio.recorder.audio_available", return_value=False)
         self.audio_patch.start()
-        QtCore.QSettings("SaxStudio", "SaxStudio").remove("ui/edits_expanded")
+        settings = QtCore.QSettings("SaxStudio", "SaxStudio")
+        settings.remove("ui/theme")
+        from saxstudio import theme
+        theme.set_theme(theme.DARK)
         self.window = MainWindow()
         self.errors = []
         self.window.show_error = self.errors.append
@@ -146,20 +149,72 @@ class UITests(unittest.TestCase):
         self.assertEqual(w.project.clips, [Clip(0, 4)])
         self.assertEqual(w.project.output_duration, 4)
 
-    def test_edit_panel_collapsed_by_default_and_summarizes_cuts(self):
+    def test_edit_dialog_shows_tools_cancel_restores_done_keeps(self):
         self.import_video()
         w = self.window
-        self.assertTrue(w.edits_body.isHidden())
         self.assertIn("未剪輯", w.edits_summary.text())
+        self.assertTrue(w.edit_button.isEnabled())
+        self.assertIs(w.mark_start, w.edit_dialog.mark_start)
+        self.assertIs(w.clip_list, w.edit_dialog.clip_list)
+        w.open_edit_dialog()
+        self.app.processEvents()
+        self.assertTrue(w.edit_dialog.isVisible())
+        self.assertIs(w.edit_dialog.video_stack.currentWidget(), w.edit_dialog.video_widget)
+        # The edit window's waveform shows the same material as the main one.
+        self.assertIs(w.edit_timeline.video_wave, w.timeline.video_wave)
         w.seek(2)
+        self.assertEqual(w.edit_timeline.position, 2)
+        self.assertIn("00:02.000", w.edit_dialog.time_label.text())
         w.split()
-        # Splitting from the shortcut opens the panel without changing the saved default.
-        self.assertFalse(w.edits_body.isHidden())
+        self.assertEqual(len(w.project.clips), 2)
+        w.edit_dialog.reject()
+        self.app.processEvents()
+        self.assertFalse(w.edit_dialog.isVisible())
+        self.assertEqual(w.project.clips, [Clip(0, 4)])
+        self.assertIn("未剪輯", w.edits_summary.text())
+        w.open_edit_dialog()
+        w.seek(1)
+        w.split()
+        w.edit_dialog.zoom.setValue(4)
+        self.assertIn("4", w.edit_dialog.zoom_label.text())
+        w.edit_dialog.accept()
+        self.app.processEvents()
+        self.assertEqual(len(w.project.clips), 2)
         self.assertIn("2 段", w.edits_summary.text())
-        self.assertFalse(QtCore.QSettings("SaxStudio", "SaxStudio").value("ui/edits_expanded", False) in (True, "true"))
-        w.edits_toggle.setChecked(False)
-        self.assertTrue(w.edits_body.isHidden())
-        self.assertIn("已剪輯", w.edits_summary.text())
+        w.step_frame(1)
+        self.assertAlmostEqual(w.position, 1 + 1/30, places=6)
+
+    def test_theme_toggle_recolours_and_is_remembered(self):
+        from saxstudio import theme
+        from saxstudio.app import style_sheet
+        w = self.window
+        self.assertFalse(theme.is_light())
+        self.assertIn("米黃", w.theme_button.text())
+        w.toggle_theme()
+        self.assertTrue(theme.is_light())
+        self.assertEqual(QtCore.QSettings("SaxStudio", "SaxStudio").value("ui/theme"), "light")
+        self.assertIn("#f5eedc", style_sheet())
+        self.assertNotIn("#101923", style_sheet())
+        self.assertEqual(theme.c("#101b27"), "#fbf5e6")
+        self.assertIn("暗色", w.theme_button.text())
+        # A new window starts in the remembered theme.
+        other = MainWindow()
+        self.assertTrue(theme.is_light())
+        other.dirty = False
+        other.close()
+        w.toggle_theme()
+        self.assertFalse(theme.is_light())
+        self.assertIn("#101923", style_sheet())
+
+    def test_help_dialog_shows_introduction_and_features(self):
+        from saxstudio.help_dialog import HelpDialog
+        dialog = HelpDialog(self.window)
+        text = dialog.browser.toPlainText()
+        self.assertIn("專為薩克斯風愛好者打造", text)
+        self.assertIn("分軌錄音，讓每個聲音都能獨立調整", text)
+        self.assertIn("功能一覽", text)
+        self.assertIn("時間剪輯", text)
+        dialog.close()
 
     def test_preset_keeps_master_limiter(self):
         self.import_video()
@@ -329,7 +384,6 @@ with TemporaryDirectory() as config:
         self.assertEqual(len(w.project.clips), 1)
         self.assertAlmostEqual(w.project.clips[0].start, .5, delta=.03)
         self.assertAlmostEqual(w.project.clips[0].end, 3.0, delta=.03)
-        self.assertFalse(w.edits_body.isHidden())
         w.undo()
         self.assertEqual(w.project.clips, [Clip(0, 4)])
         # Low-confidence alignment asks first; declining leaves clips alone.
@@ -410,9 +464,9 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.3")
+        self.assertEqual(VERSION_LABEL, "Beta V0.4")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
-        self.assertIn("Beta V0.3", self.window.windowTitle())
+        self.assertIn("Beta V0.4", self.window.windowTitle())
         sheet = style_sheet()
         self.assertNotIn("@UP@", sheet)
         for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):

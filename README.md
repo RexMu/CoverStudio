@@ -1,9 +1,18 @@
 # Sax Cover Studio — Windows 11 薩克斯風影片混音工作室
 
-**Beta V0.3** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
+**Beta V0.4** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
 **本次已驗證 Linux 的音訊／剪輯引擎與 Qt5 介面。新版 Qt6／Win11 播放、工作列圖示與 EXE 安裝仍需實機驗證；此交付包為原始碼，不包含預先建置的 Windows EXE。**
 
 ![實際介面，使用合成影音測試素材](docs/ui-screenshot.png)
+
+## Beta V0.4 更新
+
+- **時間剪輯改為浮動視窗**：主畫面右側只保留影片預覽；按對齊列最左邊的「✂ 時間剪輯…」開啟視窗，旁邊顯示目前剪輯摘要。
+  - 視窗內有影片預覽（顯示游標位置的畫面）、播放與前後一格、起點／終點、保留起訖範圍、分割（Ctrl+B）、刪除片段、依伴奏自動裁剪與前後秒數、保留片段清單。
+  - 下方是可縮放（1×～8×）的雙軌波形，播放時游標保持在畫面內。
+  - 「完成」保留這次的剪輯；「取消」或關閉視窗會還原到開啟前的狀態。
+- **功能說明**：工具列「重設版面」與「關於」之間新增，內容為軟體介紹與功能一覽（文字在 `saxstudio/help_text.py`）。
+- **米黃亮色主題**：標題列右側的切換鈕可在暗色與米黃亮色之間切換，波形、EQ 曲線、開關與音量表一起換色，下次開啟會記住。
 
 ## Beta V0.3 更新：錄音模式
 
@@ -89,7 +98,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Installer
 ```
 
-輸出：**`dist\installer\SaxCoverStudio-Setup-BetaV0.3.exe`**。採用每位使用者安裝，不要求系統管理員權限；提供開始功能表捷徑及解除安裝。
+輸出：**`dist\installer\SaxCoverStudio-Setup-BetaV0.4.exe`**。採用每位使用者安裝，不要求系統管理員權限；提供開始功能表捷徑及解除安裝。
 目前沒有程式碼簽章；正式對外分發前需完成 Win11 安裝／播放測試及依賴授權資料整理。
 
 開發模式：
