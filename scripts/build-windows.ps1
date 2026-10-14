@@ -59,5 +59,5 @@ if ($Installer) {
         & $SaxIsccPath installer\SaxCoverStudio.iss
     }
     if ($LASTEXITCODE -ne 0) { throw '安裝檔建置失敗。' }
-    Write-Host '安裝檔：dist\installer\SaxCoverStudio-Setup-BetaV0.4.exe'
+    Write-Host '安裝檔：dist\installer\SaxCoverStudio-Setup-BetaV0.5.exe'
 }

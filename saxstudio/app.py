@@ -26,7 +26,7 @@ VIDEO_FILTER = "影片 (*.mp4 *.mov *.mkv *.avi *.webm);;所有檔案 (*)"
 AUDIO_FILTER = "伴奏 (*.mp3 *.wav *.flac *.m4a *.aac *.ogg);;所有檔案 (*)"
 
 STYLE = """
-QMainWindow, QWidget { background: #101923; color: #e5edf7; font-family: 'Segoe UI', 'Microsoft JhengHei UI', 'Noto Sans CJK TC'; font-size: 13px; }
+QMainWindow, QWidget { background: #101923; color: #e5edf7; font-family: 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei UI', 'Noto Sans CJK TC'; font-size: 13px; }
 QFrame#card, QGroupBox { background: #182635; border: 1px solid #304359; border-radius: 9px; }
 QGroupBox { margin-top: 12px; padding: 12px 10px 8px; font-weight: 600; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
@@ -994,9 +994,44 @@ class MainWindow(W.QMainWindow):
             return None
         return self.float_setting(key, 0.0)
 
+    def microphone_allowed(self):
+        """macOS asks the user before an app may record. True when allowed."""
+        if sys.platform != "darwin" or not hasattr(QtCore, "QMicrophonePermission"):
+            return True
+        app = W.QApplication.instance()
+        permission = QtCore.QMicrophonePermission()
+        status = app.checkPermission(permission)
+        granted = QtCore.Qt.PermissionStatus.Granted
+        if status == granted:
+            return True
+        if status == QtCore.Qt.PermissionStatus.Undetermined:
+            self.record_panel.set_unavailable("正在等待麥克風權限…請在系統視窗按「允許」。")
+
+            def answered(result):
+                result = result.status() if hasattr(result, "status") else app.checkPermission(permission)
+                if result == granted:
+                    self.record_panel.set_unavailable("")
+                    self.open_selected_input()
+                else:
+                    self.show_microphone_denied()
+            try:
+                app.requestPermission(permission, self, answered)
+            except TypeError:
+                app.requestPermission(permission, answered)
+            return False
+        self.show_microphone_denied()
+        return False
+
+    def show_microphone_denied(self):
+        self.record_panel.set_unavailable(
+            "沒有麥克風權限。請到「系統設定 → 隱私權與安全性 → 麥克風」開啟 Sax Cover Studio，"
+            "然後重新開啟程式。")
+
     def open_selected_input(self):
         device = self.selected_input()
         if device is None or self.session is None:
+            return
+        if not self.microphone_allowed():
             return
         channel = int(self.record_panel.channel_combo.currentData() or 0)
         if self.session.open_input(device, channel):

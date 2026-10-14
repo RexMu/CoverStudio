@@ -1,9 +1,17 @@
-# Sax Cover Studio — Windows 11 薩克斯風影片混音工作室
+# Sax Cover Studio — 薩克斯風影片混音工作室（Windows 11／macOS Apple Silicon）
 
-**Beta V0.4** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
+**Beta V0.5** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
 **本次已驗證 Linux 的音訊／剪輯引擎與 Qt5 介面。新版 Qt6／Win11 播放、工作列圖示與 EXE 安裝仍需實機驗證；此交付包為原始碼，不包含預先建置的 Windows EXE。**
 
 ![實際介面，使用合成影音測試素材](docs/ui-screenshot.png)
+
+## Beta V0.5 更新：Mac 版（M 系列）
+
+- 新增 **macOS Apple Silicon（M1／M2／M3／M4…）** 打包：在 Mac 上執行一個指令即可產生 `Sax Cover Studio.app` 與 `.dmg`。
+- **FFmpeg／FFprobe 打包時自動下載**（固定 9.0.2 版、Martin Riedl 的已簽署 arm64 版本），並以官方 SHA256 與 `tools/ffmpeg-macos-arm64.lock` 雙重驗證；`tools/` 已有檔案就不重新下載。
+- **麥克風權限**：錄音模式第一次開啟時 macOS 會詢問；若拒絕，錄音面板會說明到「系統設定 → 隱私權與安全性 → 麥克風」開啟。
+- 介面字型在 Mac 使用蘋方（PingFang TC）。Mac 版不顯示 PyInstaller 開機圖（Windows 專用），仍會顯示程式內的啟動畫面與讀取進度。
+- Windows 版建置方式不變。
 
 ## Beta V0.4 更新
 
@@ -111,6 +119,26 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Installer
 
 若從舊版升級後，工作列仍顯示舊捷徑／圖示，請取消釘選舊版，再從新版本的捷徑重新釘選。
 
+## macOS（Apple Silicon）建置
+
+只支援 M 系列 Mac（arm64），macOS 12 以上。
+
+1. 從 <https://www.python.org/downloads/macos/> 安裝 **Python 3.12**（官方安裝檔）。
+2. 解壓原始碼，在 Finder 雙擊 **`build-mac.command`**；或在「終端機」進入資料夾後執行：
+   ```bash
+   bash scripts/build-mac.sh
+   ```
+   第一次需要網路（下載 Python 套件與 FFmpeg）。腳本會依序：建立 `.venv-mac`、安裝套件、下載並驗證 FFmpeg、執行功能測試、產生圖示、打包並做 ad-hoc 簽章、製作 dmg。
+3. 輸出：
+   - `dist/Sax Cover Studio.app`
+   - `dist/SaxCoverStudio-BetaV0.5-macOS-AppleSilicon.dmg`
+4. 安裝：打開 dmg，把 App 拖到「應用程式」。**第一次開啟請在 App 上按右鍵 →「打開」**（App 沒有 Apple 開發者簽章與公證，直接雙擊會被 Gatekeeper 擋下）。若仍被擋，到「系統設定 → 隱私權與安全性」按「仍要打開」。
+
+FFmpeg 相關：
+- 版本與下載位置在 `tools/ffmpeg-macos-arm64.env`。第一次下載成功會寫入 `tools/ffmpeg-macos-arm64.lock`（SHA256）；之後檔案若改變會停止打包。**刻意升級 FFmpeg 時**：修改 env、刪除 lock，再以 `FORCE=1 bash scripts/fetch-ffmpeg-mac.sh` 重新下載。
+- 想用自己的 FFmpeg：把 `ffmpeg`、`ffprobe`（arm64）放進 `tools/`，腳本就會略過下載。
+- 授權說明自動寫入 `tools/licenses/BUILD.txt` 並打包進 App。
+
 ## 操作
 
 1. 按「匯入影片」，再「匯入伴奏」。影片必須包含可解碼的原音，伴奏應為錄音時使用的同一版本。
@@ -134,6 +162,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Installer
 - 輸出會重新編碼；不做畫面裁切、多機位、字幕、變速、轉場或剪輯交叉淡化。剪輯點若切在聲音中，可能聽到突變，建議切在安靜位置。
 - 未使用 GPU 加速；長影片、高解析度影片及多段剪輯需較多時間／暫存空間，卷積音訊暫存約每分鐘 23 MB。
 - 還沒有實際麥克風演奏樣本可驗證；測試使用已知位移、音色變化與噪音的合成音訊，不能代替真實錄音驗證。
+- Mac 版只支援 Apple Silicon，未經 Apple 公證；Mac 打包、麥克風權限與錄音延遲尚未在實機驗證。專案檔若在 Windows 與 Mac 之間互換，媒體檔路徑需重新指定。
 - 專案路徑失效時目前提示原路徑，需移回原檔或手動更新 `.saxproj` 中的路徑。
 
 ## 開發驗證

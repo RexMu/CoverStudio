@@ -20,7 +20,7 @@ def binary(name):
     bundled = root / "tools" / (name + suffix)
     result = str(bundled) if bundled.is_file() else shutil.which(name)
     if not result:
-        raise RuntimeError(f"找不到 {name}。請將 ffmpeg.exe 與 ffprobe.exe 放到 tools 資料夾。")
+        raise RuntimeError(f"找不到 {name}{suffix}。請將 ffmpeg{suffix} 與 ffprobe{suffix} 放到 tools 資料夾。")
     return result
 
 

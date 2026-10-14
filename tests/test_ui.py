@@ -464,9 +464,9 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.4")
+        self.assertEqual(VERSION_LABEL, "Beta V0.5")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
-        self.assertIn("Beta V0.4", self.window.windowTitle())
+        self.assertIn("Beta V0.5", self.window.windowTitle())
         sheet = style_sheet()
         self.assertNotIn("@UP@", sheet)
         for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):

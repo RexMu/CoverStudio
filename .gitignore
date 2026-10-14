@@ -6,3 +6,8 @@ dist/
 *.spec
 .pytest_cache/
 test-output/
+.venv-mac/
+!scripts/SaxCoverStudio-mac.spec
+tools/ffmpeg
+tools/ffprobe
+tools/licenses/

@@ -7,7 +7,7 @@
 - FFmpeg: license depends on the chosen build; this app requires libx264, commonly making that build GPL. https://ffmpeg.org/legal.html
 - x264: GPL or commercial licensing. https://www.videolan.org/developers/x264.html
 
-FFmpeg binaries are supplied by the person building the application and are not present in this repository.
+FFmpeg binaries are not present in this repository. On Windows the person building supplies them; on macOS `scripts/fetch-ffmpeg-mac.sh` downloads the pinned Apple Silicon build by Martin Riedl (https://ffmpeg.martin-riedl.de/, GPL) and writes its source and checksum notes to `tools/licenses/BUILD.txt`.
 Before redistributing a built installer, include the precise build's license notices and corresponding-source access as required by its license. Place the supplied files in `tools/licenses/`; the build script copies these into the output. Preserve Qt/NumPy/SciPy package license files bundled by PyInstaller. Qt remains dynamically linked in the directory bundle.
 
 This file describes dependencies; it does not replace their licenses.
