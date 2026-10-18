@@ -464,9 +464,9 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.5")
+        self.assertEqual(VERSION_LABEL, "Beta V0.6")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
-        self.assertIn("Beta V0.5", self.window.windowTitle())
+        self.assertIn("Beta V0.6", self.window.windowTitle())
         sheet = style_sheet()
         self.assertNotIn("@UP@", sheet)
         for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):
@@ -573,6 +573,8 @@ with TemporaryDirectory() as config:
         panel.set_level(.1)
         self.assertIn("-20.0", panel.level_text.text())
         panel.set_level(.999)
+        self.assertNotIn("破音", panel.clip_label.text())  # one hot block is not clipping
+        panel.mark_clipped()
         self.assertIn("破音", panel.clip_label.text())
         panel.reset_clip()
         self.assertIn("未破音", panel.clip_label.text())

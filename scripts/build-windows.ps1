@@ -30,6 +30,7 @@ if ($SaxHasTk) {
     & $SaxPython scripts\make-boot-splash.py $SaxBootSplash
     if ($LASTEXITCODE -eq 0) { $SaxSplashArgs = @('--splash', $SaxBootSplash) }
 }
+if ($env:SAX_REQUIRE_SPLASH -and $SaxSplashArgs.Count -eq 0) { throw '開機畫面產生失敗，停止打包。' }
 if ($SaxSplashArgs.Count -eq 0) {
     Write-Warning '找不到 Tcl/Tk，EXE 將沒有「雙擊立即顯示」的開機畫面。請以 python.org 安裝程式勾選 tcl/tk 後重新建置。'
 }
@@ -59,5 +60,5 @@ if ($Installer) {
         & $SaxIsccPath installer\SaxCoverStudio.iss
     }
     if ($LASTEXITCODE -ne 0) { throw '安裝檔建置失敗。' }
-    Write-Host '安裝檔：dist\installer\SaxCoverStudio-Setup-BetaV0.5.exe'
+    Write-Host '安裝檔：dist\installer\SaxCoverStudio-Setup-BetaV0.6.exe'
 }

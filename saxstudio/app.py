@@ -163,6 +163,12 @@ class MainWindow(W.QMainWindow):
         self.preview_revision = 0
         self.preview_peaks = np.array([])
         self.pending_play = False
+        self.pending_position = 0.0
+        self.resume_after_render = False
+        self.resume_timer = QtCore.QTimer(self)
+        self.resume_timer.setSingleShot(True)
+        self.resume_timer.setInterval(600)
+        self.resume_timer.timeout.connect(self.resume_render)
         self.video_failed = False
         self.backing_range = None
         self.alignment_reliable = None
@@ -772,9 +778,15 @@ class MainWindow(W.QMainWindow):
     def mark_dirty(self, audio=False):
         self.dirty = True
         if audio:
+            was_playing = self.playing or self.pending_play
             self.pause()
             self.preview_dirty = True
             self.preview_label.setText("音效已變更 · 按播放更新")
+            if was_playing and not self.recording_active:
+                # Changed while listening: re-render, then continue from here.
+                # Debounced so dragging a slider renders once, after it settles.
+                self.resume_after_render = True
+                self.resume_timer.start()
         self.setWindowTitle(f"{APP_NAME} {VERSION_LABEL} · 未儲存")
 
     def launch(self, function, callback):
@@ -923,6 +935,7 @@ class MainWindow(W.QMainWindow):
         if self.session is None:
             self.session = recorder.AudioSession(self)
             self.session.level.connect(self.on_record_level)
+            self.session.clipped.connect(self.record_panel.mark_clipped)
             self.session.progress.connect(self.on_record_progress)
             self.session.countdown.connect(self.on_record_countdown)
             self.session.take_finished.connect(self.finish_recording)
@@ -1330,6 +1343,8 @@ class MainWindow(W.QMainWindow):
                 self.start_play()
             return
         snapshot = copy.deepcopy(self.project)
+        # Loading the new preview resets the player to 0; resume where we were.
+        resume_at = self.position
         self.preview_revision += 1
         output = Path(self.temp.name) / f"preview-{self.preview_revision}.wav"
         def task(cancel, progress):
@@ -1345,6 +1360,7 @@ class MainWindow(W.QMainWindow):
             old = self.preview_path
             self.preview_path, self.preview_peaks = result
             source(self.audio_player, self.preview_path)
+            self.seek(resume_at)
             if old:
                 try:
                     Path(old).unlink(missing_ok=True)
@@ -1353,15 +1369,34 @@ class MainWindow(W.QMainWindow):
             self.preview_dirty = False
             self.preview_label.setText("音效預覽已更新")
             self.statusBar().showMessage("預覽已就緒，音效與輸出使用相同處理流程")
-            if autoplay:
+            if autoplay or self.resume_after_render:
                 # Media loading is asynchronous; wait for both media to be loaded.
                 self.pending_play = True
                 self.pending_since = QtCore.QDateTime.currentMSecsSinceEpoch()
+                # The player may still report position 0 for the new file after
+                # this; start_play seeks here again once the media is loaded.
+                self.pending_position = resume_at
+            self.resume_after_render = False
         self.pending_play = False
         self.launch(task, done)
 
+    def resume_render(self):
+        """Re-render after a change made while playing, then keep playing."""
+        if not self.resume_after_render or not self.preview_dirty:
+            self.resume_after_render = False
+            return
+        if self.busy:
+            self.resume_timer.start()   # another job is running; try again shortly
+            return
+        self.prepare_preview(False)
+
     def toggle_play(self):
         if self.busy:
+            return
+        if self.resume_after_render:
+            # Pressing play/pause while a resume is queued: the user takes over.
+            self.resume_after_render = False
+            self.resume_timer.stop()
             return
         if self.playing:
             self.pause()
@@ -1398,6 +1433,8 @@ class MainWindow(W.QMainWindow):
             self.edit_dialog.play_button.setText("▶ 播放")
 
     def stop(self):
+        self.resume_after_render = False
+        self.resume_timer.stop()
         if self.busy:
             return
         self.pause()
@@ -1459,11 +1496,13 @@ class MainWindow(W.QMainWindow):
                 self.statusBar().showMessage("預覽媒體無法載入；請確認影片編碼，仍可嘗試匯出")
             elif all(s in ready for s in statuses):
                 self.pending_play = False
+                self.seek(self.pending_position)
                 self.start_play()
             elif waited > 8000:
                 # Some backends never report Loaded for a paused source; try anyway.
                 self.pending_play = False
                 self.statusBar().showMessage("媒體載入較慢，嘗試直接播放")
+                self.seek(self.pending_position)
                 self.start_play()
         if self.playing:
             # The rendered mix is the master clock: nudging the muted video is

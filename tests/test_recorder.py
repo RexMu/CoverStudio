@@ -377,3 +377,14 @@ class HelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClipDetectionTest(unittest.TestCase):
+    def test_single_hot_samples_are_not_clipping(self):
+        self.assertFalse(recorder.is_clipping(np.array([0, 1, 0, -1, 0, 1], np.float32)))
+        self.assertFalse(recorder.is_clipping(np.full(100, .9, np.float32)))
+
+    def test_sustained_full_scale_is_clipping(self):
+        block = np.zeros(200, np.float32)
+        block[50:53] = -1
+        self.assertTrue(recorder.is_clipping(block))

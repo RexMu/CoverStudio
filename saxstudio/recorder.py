@@ -130,6 +130,25 @@ def recording_offset(start_offset, latency_ms):
     return start_offset + latency_ms / 1000
 
 
+CLIP_LEVEL = .999   # |sample| at or above this counts as full scale
+CLIP_RUN = 3        # consecutive full-scale samples needed to call it clipping
+
+
+def is_clipping(mono, level=CLIP_LEVEL, run=CLIP_RUN):
+    """True when the block holds `run` consecutive full-scale samples.
+
+    A single hot sample is usually a transient the converter handled fine;
+    real clipping flattens the waveform for several samples in a row.
+    """
+    hot = np.abs(np.asarray(mono, np.float32)) >= level
+    if hot.sum() < run:
+        return False
+    # Longest run of True values.
+    edges = np.diff(np.concatenate(([0], hot.astype(np.int8), [0])))
+    starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+    return bool(np.max(ends - starts) >= run)
+
+
 def to_mono(raw, sample_format, channels, channel):
     """Decode interleaved PCM bytes to one float32 channel."""
     if sample_format == "float":
@@ -218,6 +237,7 @@ def _make_session_class():
     class AudioSession(QtCore.QObject):
         """Input monitoring, takes with backing playback, and calibration."""
         level = Signal(float)              # peak of the latest block, linear
+        clipped = Signal()                 # sustained full-scale samples in a block
         progress = Signal(float, float)    # recorded seconds, backing seconds left (-1 before start)
         countdown = Signal(int)            # seconds left before the backing starts
         take_finished = Signal(object)     # TakeResult
@@ -294,6 +314,8 @@ def _make_session_class():
                 return
             peak = float(np.max(np.abs(mono)))
             self.level.emit(peak)
+            if peak >= CLIP_LEVEL and is_clipping(mono):
+                self.clipped.emit()
             if self.recording:
                 self.peak = max(self.peak, peak)
                 self.recorded += len(mono)

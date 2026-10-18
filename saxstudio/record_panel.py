@@ -33,8 +33,6 @@ class LevelMeter(W.QWidget):
         self.value = max(peak, self.value * .85)
         if peak >= self.hold or now - self.hold_time > 1.5:
             self.hold, self.hold_time = peak, now
-        if peak >= .985:
-            self.clipped = True
         self.update()
 
     def reset_clip(self):
@@ -53,9 +51,10 @@ class LevelMeter(W.QWidget):
         lit = round(self.position(self.value) * n)
         hold = min(n - 1, round(self.position(self.hold) * n) - 1)
         for i in range(n):
-            if i >= 27:
+            # 2 dB per segment: yellow from -12 dB, red from -4 dB.
+            if i >= 28:
                 color = "#ff5a4f"
-            elif i >= 22:
+            elif i >= 24:
                 color = "#e9b853"
             else:
                 color = "#2ac5bf"
@@ -124,19 +123,20 @@ class RecordPanel(W.QFrame):
         meter_head.addWidget(label)
         meter_head.addStretch()
         self.level_text = W.QLabel("—")
+        self.recent_peak, self.recent_time = 0.0, 0.0
         meter_head.addWidget(self.level_text)
         layout.addLayout(meter_head)
         self.meter = LevelMeter()
         layout.addWidget(self.meter)
         scale = W.QHBoxLayout()
-        for i, text in enumerate(("-60", "-24", "-12", "-6", "0 dB")):
+        for i, text in enumerate(("-60", "-24", "-12", "-4", "0 dB")):
             if i:
                 scale.addStretch()
             mark = W.QLabel(text)
             theme.apply(mark, "color: #6f8396; font-size: 10px;")
             scale.addWidget(mark)
         layout.addLayout(scale)
-        self.clip_label = W.QLabel("試吹一下，讓音量落在黃色區域之前")
+        self.clip_label = W.QLabel("試吹最大聲的段落，峰值落在黃色區（-12～-6 dB）最理想")
         self.clip_label.setObjectName("muted")
         layout.addWidget(self.clip_label)
 
@@ -258,10 +258,19 @@ class RecordPanel(W.QFrame):
 
     def set_level(self, peak):
         self.meter.set_level(peak)
-        self.level_text.setText(f"{db(peak):.1f} dB")
-        if self.meter.clipped:
-            self.clip_label.setText("⚠ 破音了！請調低錄音介面的輸入增益")
-            theme.apply(self.clip_label, "color: #ff8a7a; font-weight: 600;")
+        now = self.meter.decay.elapsed() / 1000
+        # Highest peak of the last 3 seconds, to compare with the interface's LEDs.
+        if peak >= self.recent_peak or now - self.recent_time > 3:
+            self.recent_peak, self.recent_time = peak, now
+        self.level_text.setText(f"{db(peak):.1f} dB · 3 秒峰值 {db(self.recent_peak):.1f} dB")
+
+    def mark_clipped(self):
+        """Sustained full-scale input (see recorder.is_clipping)."""
+        self.meter.clipped = True
+        self.meter.update()
+        self.clip_label.setText("⚠ 破音了！請調低錄音介面的輸入增益；"
+                                "若介面燈號未亮，請檢查 Windows 錄音裝置音量是否為 100 並關閉音訊增強")
+        theme.apply(self.clip_label, "color: #ff8a7a; font-weight: 600;")
 
     def reset_clip(self):
         self.meter.reset_clip()

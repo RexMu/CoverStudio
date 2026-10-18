@@ -1,3 +1,13 @@
+# Sax Cover Studio Beta V0.6
+
+以 Beta V0.5 為基礎。
+
+- 預覽：播放中變更音效設定時，延遲 600 ms 合併多次變更後重新算預覽，載入後回到原位置並自動繼續播放（`resume_after_render`、`pending_position`）。手動按播放重算時也保留位置。
+- 錄音：`recorder.is_clipping` 以連續 3 個 |x| ≥ 0.999 的取樣判斷破音，經 `AudioSession.clipped` 通知面板；音量表色區改為 -12／-4 dB；顯示 3 秒峰值。
+- 建置：GitHub Actions 打包 Windows 安裝檔；`make-boot-splash.py` 在 Windows 強制使用 windows 平台外掛並確認微軟正黑體存在，CI 設 `SAX_REQUIRE_SPLASH` 時開機圖失敗即停止。
+
+---
+
 # Sax Cover Studio Beta V0.4
 
 以 Beta V0.3 為基礎。

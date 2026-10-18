@@ -17,6 +17,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONUTF8: '1'
+      SAX_REQUIRE_SPLASH: '1'
     steps:
       - uses: actions/checkout@v5
 
@@ -75,6 +76,14 @@ jobs:
           python -m venv .venv
           try { .\scripts\build-windows.ps1 -Installer }
           catch { Write-Host "::error::打包失敗：$_"; exit 1 }
+
+      - name: 上傳開機畫面（檢查字型用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-splash
+          path: build/splash/boot-splash.png
+          if-no-files-found: warn
 
       - name: 上傳安裝檔
         uses: actions/upload-artifact@v4
