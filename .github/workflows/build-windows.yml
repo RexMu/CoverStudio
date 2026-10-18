@@ -17,20 +17,31 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONUTF8: '1'
-      FFMPEG_ZIP: ffmpeg-n7.1-latest-win64-gpl-7.1.zip
-      FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip
 
       - name: 下載 FFmpeg 7.1（BtbN GPL static build）
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          trap { Write-Host "::error::FFmpeg 下載步驟失敗：$_"; exit 1 }
+          # 從 BtbN 的 latest release 挑選 7.x 以上、win64、GPL、非 shared 的 zip（取最新版號）
+          $rel = Invoke-RestMethod https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/latest -Headers @{ Authorization = "Bearer $env:GH_TOKEN" }
+          $asset = $rel.assets |
+            Where-Object { $_.name -match '^ffmpeg-n(\d+)\.(\d+).*-win64-gpl-\d+\.\d+\.zip$' -and [int]$Matches[1] -ge 7 } |
+            Sort-Object { [version]($_.name -replace '^ffmpeg-n(\d+\.\d+).*$','$1') } -Descending |
+            Select-Object -First 1
+          if (-not $asset) { throw "找不到合適的 FFmpeg 檔案。可用：$($rel.assets.name -join ', ')" }
+          $env:FFMPEG_ZIP = $asset.name
+          $env:FFMPEG_URL = $asset.browser_download_url
+          Write-Host "使用 $env:FFMPEG_URL"
           Invoke-WebRequest $env:FFMPEG_URL -OutFile $env:FFMPEG_ZIP
           $sha = (Get-FileHash $env:FFMPEG_ZIP -Algorithm SHA256).Hash
           Expand-Archive $env:FFMPEG_ZIP -DestinationPath ffmpeg-dl
@@ -62,7 +73,8 @@ jobs:
         shell: pwsh
         run: |
           python -m venv .venv
-          .\scripts\build-windows.ps1 -Installer
+          try { .\scripts\build-windows.ps1 -Installer }
+          catch { Write-Host "::error::打包失敗：$_"; exit 1 }
 
       - name: 上傳安裝檔
         uses: actions/upload-artifact@v4
