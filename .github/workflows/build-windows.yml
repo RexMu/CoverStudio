@@ -70,10 +70,25 @@ jobs:
             choco install innosetup -y --no-progress
           }
 
-      - name: 建立 venv、測試、打包安裝檔
+      - name: 功能測試（失敗時把錯誤寫進摘要）
         shell: pwsh
         run: |
           python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -q -r requirements.txt
+          Copy-Item tools\ffmpeg.exe, tools\ffprobe.exe .venv\Scripts\
+          .\.venv\Scripts\python.exe -m unittest discover -s tests 2> test-output.txt
+          $code = $LASTEXITCODE
+          Get-Content test-output.txt
+          if ($code -ne 0) {
+            $text = (Get-Content test-output.txt -Raw) -replace '%','%25' -replace "`r",'' -replace "`n",'%0A'
+            if ($text.Length -gt 6000) { $text = $text.Substring($text.Length - 6000) }
+            Write-Host "::error title=測試失敗::$text"
+            exit 1
+          }
+
+      - name: 打包安裝檔
+        shell: pwsh
+        run: |
           try { .\scripts\build-windows.ps1 -Installer }
           catch { Write-Host "::error::打包失敗：$_"; exit 1 }
 

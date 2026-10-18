@@ -1,9 +1,16 @@
 # Sax Cover Studio — 薩克斯風影片混音工作室（Windows 11／macOS Apple Silicon）
 
-**Beta V0.6** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
+**Beta V0.7** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
 **本次已驗證 Linux 的音訊／剪輯引擎與 Qt5 介面。新版 Qt6／Win11 播放、工作列圖示與 EXE 安裝仍需實機驗證；此交付包為原始碼，不包含預先建置的 Windows EXE。**
 
 ![實際介面，使用合成影音測試素材](docs/ui-screenshot.png)
+
+## Beta V0.7 更新：中途重錄
+
+- **從這裡重錄到結尾**：錄完後在時間軸點選起點（播放頭位置），按錄音面板的「從 mm:ss 重錄到結尾」。起點前 3 秒先播放伴奏與目前的錄音讓你銜接，到起點才開始錄；按停止或伴奏播完結束，起點之後換成新錄音，接縫自動做 20 ms 交叉淡化並套用延遲補償。
+- 可重錄任意次數，也可以從前一次重錄的中間再重錄；「復原上一次重錄」可一路復原。每次重錄另存檔案（約每分鐘 11 MB），存在「文件／Sax Cover Studio／錄音」。
+- **第一軌分色**：原始錄音青色，第 1、2、3… 次重錄依序橘、紫、粉紅、綠、藍（循環）；滑鼠停在波形上顯示是哪一次重錄。只在軟體中顯示，匯出不受影響。
+- **錄音設定折疊**：輸入裝置、聲道、耳機輸出、倒數、伴奏音量、延遲補償收進「⚙ 錄音設定」，收合時顯示一行摘要；第一次使用自動展開，之後記住；錄音中自動收合。
 
 ## Beta V0.6 更新
 
@@ -138,7 +145,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Installer
    第一次需要網路（下載 Python 套件與 FFmpeg）。腳本會依序：建立 `.venv-mac`、安裝套件、下載並驗證 FFmpeg、執行功能測試、產生圖示、打包並做 ad-hoc 簽章、製作 dmg。
 3. 輸出：
    - `dist/Sax Cover Studio.app`
-   - `dist/SaxCoverStudio-BetaV0.6-macOS-AppleSilicon.dmg`
+   - `dist/SaxCoverStudio-BetaV0.7-macOS-AppleSilicon.dmg`
 4. 安裝：打開 dmg，把 App 拖到「應用程式」。**第一次開啟請在 App 上按右鍵 →「打開」**（App 沒有 Apple 開發者簽章與公證，直接雙擊會被 Gatekeeper 擋下）。若仍被擋，到「系統設定 → 隱私權與安全性」按「仍要打開」。
 
 FFmpeg 相關：

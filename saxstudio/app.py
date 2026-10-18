@@ -17,7 +17,7 @@ from .alignment import align_files
 from .engine import audio_origin, export, render_mix
 from . import recorder
 from .media import active_range, decode_mono, decode_stereo, probe, thumbnail, waveform
-from .model import Clip, Effects, Project
+from .model import Clip, Effects, Project, Punch, PunchUndo
 from .record_panel import CalibrationDialog, NewProjectDialog, RecordPanel
 from .qt import QT6, QtCore, QtGui, QtMultimedia, QtWidgets as W, QtMultimediaWidgets, player, source, state_stopped
 from .widgets import EQGraph, Timeline, Worker
@@ -177,6 +177,7 @@ class MainWindow(W.QMainWindow):
         self.calibration_dialog = None
         self.live_peaks = []
         self.live_update = 0
+        self.punch = None        # {"start", "begin"} while a punch-in take runs
         self.inputs, self.outputs = [], []
         self.pending_since = 0.0
         self.last_resync = 0.0
@@ -404,6 +405,13 @@ class MainWindow(W.QMainWindow):
         self.record_panel.calibrate_requested.connect(self.open_calibration)
         self.record_panel.play_requested.connect(self.toggle_play)
         self.record_panel.volume_changed.connect(self.on_record_volume)
+        self.record_panel.punch_requested.connect(self.start_punch)
+        self.record_panel.undo_punch_requested.connect(self.undo_punch)
+        expanded = self.settings.value("record/settings_expanded", True)
+        # First use: open the settings so devices get picked; remembered afterwards.
+        self.record_panel.set_settings_expanded(expanded in (True, "true", "1", 1))
+        self.record_panel.settings_toggled.connect(
+            lambda on: self.settings.setValue("record/settings_expanded", bool(on)))
         self.h_split.addWidget(right_widget)
         self.h_split.setStretchFactor(0, 3)
         self.h_split.setStretchFactor(1, 2)
@@ -924,6 +932,10 @@ class MainWindow(W.QMainWindow):
         if not self.record_panel.unavailable.text():
             self.record_panel.record_button.setEnabled(ready)
             self.record_panel.rerecord_button.setEnabled(ready)
+            self.record_panel.punch_button.setEnabled(ready and bool(self.project.recording)
+                                                      and not self.recording_active)
+            self.record_panel.undo_punch_button.setEnabled(
+                not self.busy and not self.recording_active and bool(self.project.punch_undo))
             self.record_panel.calibrate_button.setEnabled(
                 not self.busy and not self.recording_active and self.session is not None and self.session.input_open)
 
@@ -1071,6 +1083,8 @@ class MainWindow(W.QMainWindow):
 
     def on_record_volume(self, value_db):
         self.settings.setValue("record/volume", value_db)
+        if self.punch is not None:
+            return  # the punch-in mix has the backing level baked in
         if self.session is not None and self.session.sink is not None:
             self.session.sink.setVolume(min(1.0, 10 ** (value_db / 20)))
 
@@ -1092,7 +1106,8 @@ class MainWindow(W.QMainWindow):
             return
         if self.project.recording:
             answer = W.QMessageBox.question(
-                self, "重錄", "重錄會取代目前的錄音。\n伴奏、EQ／壓縮／混響、音量與延遲校正都會保留。\n要開始重錄嗎？",
+                self, "重錄", "重錄會取代目前的整段錄音" + ("（中途重錄的紀錄也會清除）" if self.project.punches else "") +
+                "。\n伴奏、EQ／壓縮／混響、音量與延遲校正都會保留。\n要開始重錄嗎？",
                 W.QMessageBox.Yes | W.QMessageBox.No, W.QMessageBox.Yes)
             if answer != W.QMessageBox.Yes:
                 return
@@ -1139,6 +1154,13 @@ class MainWindow(W.QMainWindow):
             self.live_peaks.append(peak)
 
     def on_record_progress(self, seconds, left):
+        if self.punch is not None:
+            # `seconds` counts from the take start; playback starts ~immediately.
+            heard = self.punch["begin"] + seconds
+            self.record_panel.set_punch_progress(self.punch["start"] - heard, heard, left)
+            self.timeline.position = min(heard, self.timeline.total())
+            self.timeline.update()
+            return
         self.record_panel.set_progress(seconds, left)
         now = QtCore.QDateTime.currentMSecsSinceEpoch()
         if self.recording_active and now - self.live_update > 120 and self.live_peaks:
@@ -1155,6 +1177,9 @@ class MainWindow(W.QMainWindow):
             self.record_panel.set_state("recording")
 
     def finish_recording(self, result):
+        if self.punch is not None:
+            self.finish_punch(result)
+            return
         self.recording_active = False
         latency = self.current_latency() or 0.0
         offset = recorder.recording_offset(result.start_offset, latency)
@@ -1169,6 +1194,7 @@ class MainWindow(W.QMainWindow):
             p.duration = info["duration"]
             p.clips = [Clip(0, p.duration)]
             p.offset = offset
+            p.punches, p.punch_undo = [], []
             self.undo_stack.clear()
             self.alignment_reliable = None
             self.timeline.override_duration = None
@@ -1188,12 +1214,120 @@ class MainWindow(W.QMainWindow):
         self.record_panel.set_state("done" if self.project.recording else "ready")
         self.launch(task, done)
 
+    # ------------------------------------------------------------ punch-in
+    def start_punch(self):
+        """Re-record from the playhead to the end (the old take stays until done)."""
+        p = self.project
+        if self.busy or self.recording_active or not p.is_record or not p.recording:
+            return
+        if self.session is None or not self.session.input_open:
+            self.show_error("麥克風尚未開啟，請確認輸入裝置")
+            return
+        start = max(0.0, min(self.position, p.duration - .2))
+        self.pause()
+        backing, recording, offset = p.backing, p.recording, p.offset
+        gain = min(1.0, 10 ** (self.record_panel.volume_db / 20))
+        def task(cancel, progress):
+            progress("正在準備重錄（伴奏＋目前錄音）…")
+            back = decode_stereo(backing, cancel=cancel)
+            rec = decode_mono(recording, rate=48000, cancel=cancel)
+            return recorder.punch_playback(back, rec, offset, start, backing_gain=gain)
+        def ready(result):
+            mix, begin = result
+            self.begin_punch(mix, begin, start)
+        self.launch(task, ready)
+
+    def begin_punch(self, mix, begin, start):
+        stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd-HHmmss")
+        path = self.recordings_dir() / f"錄音-{stamp}-重錄{len(self.project.punches) + 1}.wav"
+        self.record_panel.reset_clip()
+        self.record_panel.clip_label.setText("重錄中…")
+        self.punch = {"start": start, "begin": begin}
+        if not self.session.start_take(str(path), self.selected_output(), mix, 1.0, 0):
+            self.punch = None
+            return
+        self.recording_active = True
+        self.record_panel.set_state("punch")
+        self.record_panel.set_punch_progress(start - begin, begin, -1)
+        self.refresh()
+        self.statusBar().showMessage(f"重錄中 · 起點 {clock(start)} · 檔案：{path}")
+
+    def finish_punch(self, result):
+        punch, self.punch = self.punch, None
+        self.recording_active = False
+        p = self.project
+        latency = self.current_latency() or 0.0
+        old_path = p.recording
+        stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd-HHmmss")
+        number = len(p.punches) + 1
+        out = self.recordings_dir() / f"錄音-{stamp}-合成{number}.wav"
+        def task(cancel, progress):
+            progress("正在接合重錄…")
+            old = decode_mono(old_path, rate=48000, cancel=cancel)
+            take = decode_mono(result.path, rate=48000, cancel=cancel)
+            merged = recorder.splice_punch(old, take, punch["start"], punch["begin"],
+                                           result.start_offset, latency)
+            writer = recorder.WavWriter(out, 48000, 1)
+            writer.write(merged)
+            writer.close()
+            return len(merged) / 48000, waveform(out, cancel)
+        def done(analysis):
+            seconds, wave = analysis
+            p.punch_undo.append(PunchUndo(old_path, p.duration, copy.deepcopy(p.clips)))
+            p.punches.append(Punch(punch["start"], number))
+            p.recording = str(out)
+            p.duration = seconds
+            # Clips before the punch stay; the one holding it now runs to the new end.
+            kept = [Clip(c.start, min(c.end, seconds)) for c in p.clips if c.start < punch["start"]]
+            if kept:
+                kept[-1].end = seconds
+            p.clips = kept or [Clip(0, seconds)]
+            self.undo_stack.clear()
+            self.timeline.video_wave = wave
+            self.timeline.video_duration = None
+            self.load_media(None)
+            self.apply_mode()
+            self.mark_dirty(audio=True)
+            self.seek(max(0.0, punch["start"] - recorder.PREROLL))
+            self.record_panel.set_done(p.duration, p.recording, len(p.punches))
+            self.statusBar().showMessage(f"已從 {clock(punch['start'])} 重錄（第 {number} 次）；"
+                                         "不滿意可按「復原上一次重錄」")
+            self.refresh()
+        self.record_panel.set_state("done")
+        self.launch(task, done)
+
+    def undo_punch(self):
+        p = self.project
+        if self.busy or self.recording_active or not p.punch_undo:
+            return
+        previous = p.punch_undo[-1]
+        def task(cancel, progress):
+            progress("正在復原…")
+            return waveform(previous.recording, cancel)
+        def done(wave):
+            p.punch_undo.pop()
+            removed = p.punches.pop()
+            p.recording, p.duration = previous.recording, previous.duration
+            p.clips = previous.clips or [Clip(0, previous.duration)]
+            self.undo_stack.clear()
+            self.timeline.video_wave = wave
+            self.timeline.video_duration = None
+            self.load_media(None)
+            self.apply_mode()
+            self.mark_dirty(audio=True)
+            self.seek(max(0.0, removed.start - recorder.PREROLL))
+            self.record_panel.set_done(p.duration, p.recording, len(p.punches))
+            self.statusBar().showMessage(f"已復原第 {removed.number} 次重錄")
+            self.refresh()
+        self.launch(task, done)
+
     def on_record_failed(self, text):
         if self.calibration_dialog is not None:
             self.calibration_dialog.show_error(text)
             return
         if self.recording_active:
             self.recording_active = False
+            self.punch = None
             self.record_panel.set_state("done" if self.project.recording else "ready")
             self.timeline.override_duration = None if self.project.recording else (self.timeline.back_duration or None)
             self.timeline.video_duration = None
@@ -1476,6 +1610,8 @@ class MainWindow(W.QMainWindow):
             view.position = self.position
             view.update()
         self.time_label.setText(f"原片時間 {clock(self.position)}")
+        if self.project.is_record and not self.recording_active:
+            self.record_panel.set_punch_point(self.position)
         self.edit_dialog.time_label.setText(f"{clock(self.position)} / {clock(self.project.duration)}")
         if self.edit_dialog.isVisible() and self.project.duration > 0:
             # Keep the playhead in view when the waveform is zoomed in.
@@ -1726,7 +1862,8 @@ class MainWindow(W.QMainWindow):
             self.load_controls()
             self.apply_mode()
             if self.project.is_record:
-                self.record_panel.set_done(self.project.duration, self.project.recording)
+                self.record_panel.set_done(self.project.duration, self.project.recording,
+                                           len(self.project.punches))
                 self.record_offset_label.setText("已讀取儲存的位移 · 請播放核對")
             self.dirty = False
             self.preview_label.setText("按播放建立音效預覽")

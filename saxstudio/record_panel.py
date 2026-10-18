@@ -83,6 +83,9 @@ class RecordPanel(W.QFrame):
     calibrate_requested = Signal()
     play_requested = Signal()
     volume_changed = Signal(float)
+    punch_requested = Signal()
+    undo_punch_requested = Signal()
+    settings_toggled = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -100,6 +103,41 @@ class RecordPanel(W.QFrame):
         head.addWidget(self.format_label)
         layout.addLayout(head)
 
+        # ---- settings fold: devices, countdown, headphone volume, latency
+        self.fold = W.QFrame()
+        self.fold.setObjectName("settingsFold")
+        theme.apply(self.fold, "QFrame#settingsFold { background: #132232; border: 1px solid #2c4156; border-radius: 6px; }")
+        fold_box = W.QVBoxLayout(self.fold)
+        fold_box.setContentsMargins(10, 6, 10, 8)
+        fold_box.setSpacing(4)
+        fold_head = W.QHBoxLayout()
+        self.fold_button = W.QToolButton()
+        self.fold_button.setObjectName("foldButton")
+        self.fold_button.setText("⚙ 錄音設定")
+        self.fold_button.setCheckable(True)
+        self.fold_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.fold_button.setArrowType(QtCore.Qt.RightArrow)
+        self.fold_button.setAccessibleName("展開或收合錄音設定")
+        theme.apply(self.fold_button, "QToolButton { border: none; font-weight: 600; padding: 2px 0; }")
+        self.fold_button.toggled.connect(self.set_settings_expanded)
+        fold_head.addWidget(self.fold_button)
+        fold_head.addStretch()
+        self.fold_hint = W.QLabel("展開")
+        self.fold_hint.setObjectName("muted")
+        fold_head.addWidget(self.fold_hint)
+        fold_box.addLayout(fold_head)
+        self.summary = W.QLabel("")
+        self.summary.setObjectName("muted")
+        self.summary.setWordWrap(True)
+        self.summary.setTextFormat(QtCore.Qt.RichText)
+        fold_box.addWidget(self.summary)
+        self.fold_body = W.QWidget()
+        body = W.QVBoxLayout(self.fold_body)
+        body.setContentsMargins(0, 4, 0, 0)
+        body.setSpacing(8)
+        fold_box.addWidget(self.fold_body)
+        layout.addWidget(self.fold)
+
         grid = W.QGridLayout()
         grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(8)
@@ -112,7 +150,7 @@ class RecordPanel(W.QFrame):
         for i, (text, combo) in enumerate((("輸入裝置", self.input_combo), ("輸入聲道", self.channel_combo),
                                            ("耳機輸出", self.output_combo), ("開始前倒數", self.countdown_combo))):
             grid.addLayout(_labelled(text, combo), i // 2, i % 2)
-        layout.addLayout(grid)
+        body.addLayout(grid)
         self.input_combo.currentIndexChanged.connect(lambda *_: self.device_changed.emit())
         self.channel_combo.currentIndexChanged.connect(lambda *_: self.device_changed.emit())
         self.output_combo.currentIndexChanged.connect(lambda *_: self.device_changed.emit())
@@ -151,7 +189,7 @@ class RecordPanel(W.QFrame):
         volume_row.addWidget(self.volume_slider, 1)
         self.volume_text = W.QLabel("-6.0 dB")
         volume_row.addWidget(self.volume_text)
-        layout.addLayout(volume_row)
+        body.addLayout(volume_row)
         self.volume_slider.valueChanged.connect(self._volume)
 
         latency = W.QFrame()
@@ -169,7 +207,11 @@ class RecordPanel(W.QFrame):
         self.calibrate_button = W.QPushButton("校正")
         self.calibrate_button.clicked.connect(self.calibrate_requested.emit)
         row.addWidget(self.calibrate_button)
-        layout.addWidget(latency)
+        body.addWidget(latency)
+        for combo in (self.input_combo, self.channel_combo, self.output_combo, self.countdown_combo):
+            combo.currentIndexChanged.connect(lambda *_: self.update_summary())
+        self.latency_ms = None
+        self.fold_body.hide()
 
         self.states = W.QStackedWidget()
         ready = W.QWidget()
@@ -222,11 +264,32 @@ class RecordPanel(W.QFrame):
         play.setObjectName("primary")
         play.clicked.connect(self.play_requested.emit)
         buttons.addWidget(play)
-        self.rerecord_button = W.QPushButton("重錄（取代這次錄音）")
+        self.rerecord_button = W.QPushButton("重錄（取代整段）")
         self.rerecord_button.setToolTip("伴奏、EQ／壓縮／混響、音量與延遲校正都保留，只換掉錄音")
         self.rerecord_button.clicked.connect(self.record_requested.emit)
         buttons.addWidget(self.rerecord_button)
         box.addLayout(buttons)
+        self.punch_button = W.QPushButton("●  從 00:00.0 重錄到結尾")
+        self.punch_button.setObjectName("punch")
+        theme.apply(self.punch_button, "QPushButton#punch { background: #3a2a12; border: 1px solid #e9b853; "
+                                       "color: #ffd88a; font-weight: 600; padding: 8px; border-radius: 6px; }"
+                                       "QPushButton#punch:disabled { color: #7f6a45; border-color: #5a4a2a; }")
+        self.punch_button.setToolTip("起點＝播放頭位置（點下方時間軸移動）。起點前 3 秒先播伴奏與目前錄音，"
+                                     "到起點開始錄；按停止或伴奏播完結束，起點之後換成新錄音。")
+        self.punch_button.clicked.connect(self.punch_requested.emit)
+        box.addWidget(self.punch_button)
+        undo_row = W.QHBoxLayout()
+        self.undo_punch_button = W.QPushButton("↶  復原上一次重錄")
+        self.undo_punch_button.clicked.connect(self.undo_punch_requested.emit)
+        undo_row.addWidget(self.undo_punch_button, 1)
+        self.undo_hint = W.QLabel("")
+        self.undo_hint.setObjectName("muted")
+        undo_row.addWidget(self.undo_hint)
+        box.addLayout(undo_row)
+        self.punch_hint = W.QLabel("點下方時間軸設定重錄起點；起點前 3 秒會先播伴奏與目前錄音讓你銜接。")
+        self.punch_hint.setObjectName("muted")
+        self.punch_hint.setWordWrap(True)
+        box.addWidget(self.punch_hint)
         self.file_label = W.QLabel("")
         self.file_label.setObjectName("muted")
         self.file_label.setWordWrap(True)
@@ -242,10 +305,13 @@ class RecordPanel(W.QFrame):
         layout.addStretch()
         self.settings_widgets = [self.input_combo, self.channel_combo, self.output_combo,
                                  self.countdown_combo, self.calibrate_button]
+        self.update_summary()
 
     # ---- state
     def _volume(self, value):
         self.volume_text.setText(f"{value/10:.1f} dB")
+        if hasattr(self, "summary"):
+            self.update_summary()
         self.volume_changed.emit(value / 10)
 
     @property
@@ -278,6 +344,8 @@ class RecordPanel(W.QFrame):
         theme.apply(self.clip_label, "color: #32d4ce;")
 
     def set_latency(self, ms):
+        self.latency_ms = ms
+        self.update_summary()
         if ms is None:
             self.latency_value.setText("尚未校正")
             theme.apply(self.latency_value, "font-weight: 600; color: #e9b853;")
@@ -288,11 +356,22 @@ class RecordPanel(W.QFrame):
             self.calibrate_button.setText("重新校正")
 
     def set_state(self, state):
-        index = {"ready": 0, "recording": 1, "countdown": 1, "done": 2}[state]
+        index = {"ready": 0, "recording": 1, "countdown": 1, "punch": 1, "done": 2}[state]
         self.states.setCurrentIndex(index)
-        busy = state in ("recording", "countdown")
+        busy = state in ("recording", "countdown", "punch")
         for widget in self.settings_widgets:
             widget.setEnabled(not busy)
+        if busy:
+            self.fold_body.hide()   # keep the record controls in view
+        else:
+            self.fold_body.setVisible(self.fold_button.isChecked())
+        self.fold_button.setEnabled(not busy)
+        if state == "punch":
+            self.rec_state.setText("◔ 預備中")
+            theme.apply(self.rec_state, "color: #e9b853; font-weight: 700;")
+            self.rec_left.setText("秒後開始錄音")
+        else:
+            theme.apply(self.rec_state, "color: #ff8a7a; font-weight: 700;")
         if state == "countdown":
             self.rec_state.setText("倒數")
             self.rec_left.setText("伴奏即將開始")
@@ -313,11 +392,60 @@ class RecordPanel(W.QFrame):
             m, s = divmod(left, 60)
             self.rec_left.setText(f"伴奏剩 {int(m):02}:{s:04.1f}")
 
-    def set_done(self, seconds, path):
+    def set_done(self, seconds, path, punches=0):
         minutes, rest = divmod(seconds, 60)
-        self.done_label.setText(f"✓ 錄音完成 · {int(minutes):02}:{rest:04.1f} 已放入第一軌")
+        extra = f" · 重錄 {punches} 次" if punches else ""
+        self.done_label.setText(f"✓ 已錄 {int(minutes):02}:{rest:04.1f}{extra}")
         self.file_label.setText(f"檔案：{path}")
+        self.undo_punch_button.setVisible(bool(punches))
+        self.undo_hint.setVisible(bool(punches))
+        self.undo_hint.setText(f"可連續復原 {punches} 次")
         self.set_state("done")
+
+    def set_punch_point(self, seconds):
+        minutes, rest = divmod(max(0.0, seconds), 60)
+        self.punch_button.setText(f"●  從 {int(minutes):02}:{rest:04.1f} 重錄到結尾")
+
+    def set_punch_progress(self, preroll_left, timeline_seconds, backing_left):
+        """During a punch-in: count down the preroll, then show the timeline time."""
+        if preroll_left > 0:
+            self.rec_state.setText("◔ 預備中")
+            theme.apply(self.rec_state, "color: #e9b853; font-weight: 700;")
+            self.rec_time.setText(f"{preroll_left:.1f}")
+            self.rec_left.setText("秒後開始錄音")
+            return
+        self.rec_state.setText("● 重錄中")
+        theme.apply(self.rec_state, "color: #ff8a7a; font-weight: 700;")
+        minutes, rest = divmod(timeline_seconds, 60)
+        self.rec_time.setText(f"{int(minutes):02}:{rest:04.1f}")
+        if backing_left >= 0:
+            m, s = divmod(backing_left, 60)
+            self.rec_left.setText(f"伴奏剩 {int(m):02}:{s:04.1f}")
+
+    # ---- settings fold
+    def set_settings_expanded(self, expanded):
+        if self.fold_button.isChecked() != expanded:
+            self.fold_button.blockSignals(True)
+            self.fold_button.setChecked(expanded)
+            self.fold_button.blockSignals(False)
+        self.fold_button.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
+        self.fold_hint.setText("收合" if expanded else "展開")
+        self.fold_body.setVisible(expanded)
+        self.summary.setVisible(not expanded)
+        self.settings_toggled.emit(expanded)
+
+    def update_summary(self):
+        def name(combo):
+            return combo.currentText() or "—"
+        parts = [f"輸入：{name(self.input_combo)} · {name(self.channel_combo)}",
+                 f"耳機：{name(self.output_combo)}"]
+        if self.latency_ms is None:
+            parts.append(f"<span style='color:{theme.c('#e9b853')}'>⚠ 延遲尚未校正</span>")
+        else:
+            parts.append(f"延遲 {self.latency_ms:.1f} ms")
+        parts.append(f"伴奏 {self.volume_slider.value()/10:.1f} dB")
+        parts.append(f"倒數 {self.countdown_combo.currentText() or '—'}")
+        self.summary.setText("　｜　".join(parts))
 
     def set_unavailable(self, message):
         message = message or ""
@@ -325,6 +453,7 @@ class RecordPanel(W.QFrame):
         self.unavailable.setVisible(bool(message))
         self.record_button.setEnabled(not message)
         self.rerecord_button.setEnabled(not message)
+        self.punch_button.setEnabled(not message)
         self.calibrate_button.setEnabled(not message)
 
 

@@ -58,6 +58,14 @@ class EQGraph(QtWidgets.QWidget):
         p.drawPath(path)
 
 
+# Track-1 colour per take in record mode: original, then punch-ins (cycled).
+TAKE_COLORS = ("#27c9c3", "#ff9a4a", "#a08bff", "#ff7eb6", "#7bd88f", "#5aa9ff")
+
+
+def take_color(number):
+    return TAKE_COLORS[0] if number <= 0 else TAKE_COLORS[1 + (number - 1) % (len(TAKE_COLORS) - 1)]
+
+
 class Timeline(QtWidgets.QWidget):
     seek = Signal(float)
     select = Signal(int)
@@ -101,9 +109,27 @@ class Timeline(QtWidgets.QWidget):
         self.seek.emit(t)
         self.update()
 
+    def take_segments(self):
+        """Coloured track-1 segments; empty unless a finished recording has punch-ins."""
+        p = self.project
+        if not p or not p.is_record or not p.punches or self.video_duration or self.override_duration:
+            return []
+        return p.take_segments()
+
     def mouseMoveEvent(self, event):
         if event.buttons() & QtCore.Qt.LeftButton:
             self.mousePressEvent(event)
+            return
+        segments = self.take_segments()
+        if not segments:
+            return
+        t = self.x_time(event.pos().x())
+        seg = next((s for s in segments if s[0] <= t < s[1]), None)
+        if seg is None:
+            return
+        text = "原始錄音" if seg[2] == 0 else f"第 {seg[2]} 次重錄 · {int(seg[0])//60:02}:{seg[0]%60:04.1f} 起"
+        pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+        QtWidgets.QToolTip.showText(pos, text, self)
 
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
@@ -123,6 +149,7 @@ class Timeline(QtWidgets.QWidget):
             p.setPen(QtGui.QColor(theme.c("#223344")))
             p.drawLine(QtCore.QPointF(x, top), QtCore.QPointF(x, self.height()-8))
             p.setPen(QtGui.QColor(theme.c("#7f92a8")))
+        segments = self.take_segments()
         for row, (wave, duration, offset, color) in enumerate([
             (self.video_wave, self.video_duration or self.project.duration, 0, "#27c9c3"),
             (self.back_wave, self.back_duration, self.project.offset, "#e9b853")]):
@@ -132,9 +159,17 @@ class Timeline(QtWidgets.QWidget):
                 for pixel in range(12, self.width()-12):
                     t = self.x_time(pixel)-offset
                     if 0 <= t < duration:
+                        if row == 0 and segments:
+                            number = next((s[2] for s in segments if s[0] <= t < s[1]), segments[-1][2])
+                            p.setPen(QtGui.QPen(QtGui.QColor(theme.c(take_color(number))), 1))
                         index = min(len(wave)-1, int(t/max(.001, duration)*len(wave)))
                         height = float(wave[index])*track_h*.38
                         p.drawLine(QtCore.QPointF(pixel, mid-height), QtCore.QPointF(pixel, mid+height))
+        # Seams between takes.
+        for start, _end, _number in segments[1:]:
+            x = self.time_x(start)
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 130), 1))
+            p.drawLine(QtCore.QPointF(x, top - 2), QtCore.QPointF(x, top + track_h))
         # Gray shading on deleted regions, selection outline on a retained clip.
         last = 0
         clips = [] if self.override_duration else self.project.clips

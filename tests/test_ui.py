@@ -464,9 +464,9 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.6")
+        self.assertEqual(VERSION_LABEL, "Beta V0.7")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
-        self.assertIn("Beta V0.6", self.window.windowTitle())
+        self.assertIn("Beta V0.7", self.window.windowTitle())
         sheet = style_sheet()
         self.assertNotIn("@UP@", sheet)
         for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):
@@ -592,6 +592,33 @@ with TemporaryDirectory() as config:
         dialog.show_result(38.5, .4, 8)
         self.assertTrue(dialog.apply_button.isEnabled())
         self.assertEqual(dialog.result_ms, 38.5)
+
+    def test_record_panel_settings_fold_and_punch(self):
+        from saxstudio.record_panel import RecordPanel
+        panel = RecordPanel()
+        panel.set_settings_expanded(False)
+        self.assertTrue(panel.fold_body.isHidden())
+        self.assertIn("延遲尚未校正", panel.summary.text())
+        panel.set_latency(14.6)
+        self.assertIn("14.6 ms", panel.summary.text())
+        panel.set_settings_expanded(True)
+        self.assertFalse(panel.fold_body.isHidden())
+        panel.set_state("punch")
+        self.assertTrue(panel.fold_body.isHidden())   # collapsed while recording
+        self.assertFalse(panel.input_combo.isEnabled())
+        panel.set_punch_progress(2.1, 70.3, -1)
+        self.assertIn("預備", panel.rec_state.text())
+        panel.set_punch_progress(0, 72.5, 90)
+        self.assertIn("重錄中", panel.rec_state.text())
+        self.assertEqual(panel.rec_time.text(), "01:12.5")
+        panel.set_done(222.5, "x.wav", 2)
+        self.assertFalse(panel.fold_body.isHidden())
+        self.assertIn("重錄 2 次", panel.done_label.text())
+        self.assertIn("2 次", panel.undo_hint.text())
+        panel.set_punch_point(72.4)
+        self.assertIn("01:12.4", panel.punch_button.text())
+        panel.set_done(222.5, "x.wav", 0)
+        self.assertTrue(panel.undo_punch_button.isHidden())
 
 
 

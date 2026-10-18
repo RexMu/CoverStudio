@@ -130,6 +130,65 @@ def recording_offset(start_offset, latency_ms):
     return start_offset + latency_ms / 1000
 
 
+PREROLL = 3.0      # seconds heard before a punch-in point
+PUNCH_FADE = .02   # crossfade at the punch-in seam
+
+
+def punch_playback(backing, recording, offset, start, rate=48000, preroll=PREROLL,
+                   backing_gain=1.0):
+    """Headphone mix for a punch-in.
+
+    backing: float32 (frames, 2); recording: float32 mono, both at `rate`.
+    `offset` is the project offset (backing sample 0 on the recording
+    timeline); `start` the punch-in point on that timeline. Returns
+    (stereo float32, playback start on the recording timeline). The existing
+    recording is heard only until `start`, where it fades out.
+    """
+    begin = max(0.0, start - preroll)
+    b0 = int(round((begin - offset) * rate))      # backing frame at `begin`
+    frames = max(0, len(backing) - b0) if b0 >= 0 else len(backing) - b0
+    frames = max(frames, int(round((start - begin) * rate)) + rate // 10)
+    out = np.zeros((frames, 2), np.float32)
+    src0, dst0 = max(0, b0), max(0, -b0)
+    count = min(len(backing) - src0, frames - dst0)
+    if count > 0:
+        out[dst0:dst0 + count] = backing[src0:src0 + count] * backing_gain
+    r0, r1 = int(round(begin * rate)), int(round(start * rate))
+    old = np.asarray(recording[r0:r1], np.float32).copy()
+    fade = min(len(old), int(rate * .01))
+    if fade:
+        old[-fade:] *= np.linspace(1, 0, fade, dtype=np.float32)
+    out[:len(old)] += old[:, None]
+    return np.clip(out, -1, 1), begin
+
+
+def splice_punch(recording, take, start, begin, start_offset, latency_ms, rate=48000,
+                 fade=PUNCH_FADE):
+    """New track-1 audio: `recording` up to `start`, then the punch-in `take`.
+
+    The take's playback began at `begin` (recording timeline) after
+    `start_offset` seconds of take audio; the musician is heard
+    `latency_ms` later. Raises ValueError when the take ends before `start`.
+    """
+    # Take sample that belongs at recording time t: t - begin + start_offset + latency.
+    shift = int(round((start_offset + latency_ms / 1000 - begin) * rate))
+    s = int(round(start * rate))
+    half = int(round(fade * rate / 2))
+    a = max(0, s - half)
+    if a + shift < 0:
+        a = -shift
+    if len(take) - (s + shift) < rate // 10:
+        raise ValueError("在重錄起點之前就停止了，沒有錄到新的內容")
+    new = np.asarray(take[a + shift:], np.float32)
+    keep = np.asarray(recording[:a], np.float32)
+    n = min(2 * half, len(new), max(0, len(recording) - a))
+    if n:
+        w = np.linspace(0, 1, n, dtype=np.float32)
+        new = new.copy()
+        new[:n] = recording[a:a + n] * (1 - w) + new[:n] * w
+    return np.concatenate([keep, new])
+
+
 CLIP_LEVEL = .999   # |sample| at or above this counts as full scale
 CLIP_RUN = 3        # consecutive full-scale samples needed to call it clipping
 

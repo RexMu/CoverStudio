@@ -381,5 +381,32 @@ class MediaTests(unittest.TestCase):
         self.assertGreater(np.std(data[960:5760]), np.std(data[-4800:])*100)
 
 
+class PunchModelTest(unittest.TestCase):
+    def test_segments_and_save_round_trip(self):
+        from saxstudio.model import Clip, Project, Punch, PunchUndo
+        p = Project(mode="record", duration=200, clips=[Clip(0, 200)])
+        p.punches = [Punch(72, 1), Punch(125, 2)]
+        p.punch_undo = [PunchUndo("a.wav", 200, [Clip(0, 200)]), PunchUndo("b.wav", 201)]
+        self.assertEqual(p.take_segments(), [(0.0, 72, 0), (72, 125, 1), (125, 200, 2)])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "x.saxproj"
+            p.save(path)
+            q = Project.load(path)
+        self.assertEqual(q.punches, p.punches)
+        self.assertEqual(q.punch_undo[0].clips, [Clip(0, 200)])
+        p.punches.append(Punch(50, 3))
+        self.assertEqual(p.take_segments(), [(0.0, 50, 0), (50, 200, 3)])
+
+    def test_old_project_files_have_no_punches(self):
+        from saxstudio.model import Project
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "old.saxproj"
+            Project().save(path)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data.pop("punches"), data.pop("punch_undo")
+            path.write_text(json.dumps(data), encoding="utf-8")
+            self.assertEqual(Project.load(path).punches, [])
+
+
 if __name__ == "__main__":
     unittest.main()

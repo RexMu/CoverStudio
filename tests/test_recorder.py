@@ -386,5 +386,44 @@ class ClipDetectionTest(unittest.TestCase):
         self.assertTrue(recorder.is_clipping(block))
 
 
+class PunchInTest(unittest.TestCase):
+    RATE = 48000
+
+    def test_playback_mixes_backing_and_old_take_until_the_punch(self):
+        r = self.RATE
+        recording = np.full(10 * r, .2, np.float32)
+        backing = np.full((8 * r, 2), .1, np.float32)
+        mix, begin = recorder.punch_playback(backing, recording, 1.0, 5.0, backing_gain=.5)
+        self.assertAlmostEqual(begin, 2.0)
+        self.assertEqual(len(mix), 7 * r)              # backing from 2 s (= backing 1 s) to its end
+        self.assertAlmostEqual(float(mix[0, 0]), .25, places=5)
+        self.assertAlmostEqual(float(mix[3 * r + 10, 0]), .05, places=5)  # old take silent after punch
+
+    def test_playback_before_backing_starts_is_padded(self):
+        r = self.RATE
+        mix, begin = recorder.punch_playback(np.ones((r, 2), np.float32), np.zeros(5 * r, np.float32),
+                                             4.0, 1.0)
+        self.assertEqual(begin, 0.0)
+        self.assertEqual(float(mix[2 * r, 0]), 0.0)
+        self.assertEqual(float(mix[4 * r + 10, 0]), 1.0)
+
+    def test_splice_lines_up_take_with_timeline(self):
+        r = self.RATE
+        old = np.arange(10 * r, dtype=np.float32) / 1e6
+        begin, so, latency = 2.0, .05, 10.0
+        idx = np.arange(6 * r)
+        timeline = idx / r - so - latency / 1000 + begin
+        take = (-timeline * r / 1e6).astype(np.float32)
+        out = recorder.splice_punch(old, take, 5.0, begin, so, latency)
+        self.assertAlmostEqual(float(out[4 * r]), 4.0 * r / 1e6, places=5)
+        self.assertAlmostEqual(float(out[6 * r]), -6.0 * r / 1e6, places=5)
+        self.assertAlmostEqual(len(out) / r, begin + 6 - so - latency / 1000, places=3)
+
+    def test_splice_rejects_take_stopped_before_punch(self):
+        with self.assertRaises(ValueError):
+            recorder.splice_punch(np.zeros(480000, np.float32), np.zeros(48000, np.float32),
+                                  5.0, 2.0, .05, 10.0)
+
+
 if __name__ == "__main__":
     unittest.main()

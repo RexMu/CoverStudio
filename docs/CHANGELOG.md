@@ -1,3 +1,14 @@
+# Sax Cover Studio Beta V0.7
+
+以 Beta V0.6 為基礎。
+
+- 中途重錄（punch-in）：`recorder.punch_playback` 產生預備 3 秒的耳機混音（伴奏已乘耳機音量＋目前錄音，起點處淡出），`recorder.splice_punch` 依 take 的 start_offset 與延遲把新錄音接到起點（20 ms 交叉淡化），寫成新的合成 WAV。
+- `Project.punches`（起點、第幾次）與 `Project.punch_undo`（重錄前的錄音檔、長度、片段）存進 `.saxproj`；舊專案檔沒有這兩欄時視為空。整段重錄會清空。
+- `Timeline` 依 `Project.take_segments()` 分色畫第一軌並畫接縫線，滑鼠停留顯示重錄次數。
+- 錄音面板：設定折疊卡（`record/settings_expanded`，預設展開）、摘要、`punch` 狀態、重錄／復原按鈕。
+
+---
+
 # Sax Cover Studio Beta V0.6
 
 以 Beta V0.5 為基礎。

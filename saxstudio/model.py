@@ -38,6 +38,21 @@ class Clip:
     end: float
 
 
+@dataclass
+class Punch:
+    """A punch-in: everything from `start` (recording time) on is take `number`."""
+    start: float
+    number: int
+
+
+@dataclass
+class PunchUndo:
+    """Track-1 state before a punch-in, restored by undo."""
+    recording: str
+    duration: float
+    clips: list[Clip] = field(default_factory=list)
+
+
 MODES = ("video", "record")
 
 
@@ -58,6 +73,10 @@ class Project:
     # WAV recorded in the app while the backing played (no picture).
     mode: str = "video"
     recording: str = ""
+    # Record mode: punch-ins applied to `recording` (oldest first) and the
+    # states before each of them, so they can be undone one by one.
+    punches: list[Punch] = field(default_factory=list)
+    punch_undo: list[PunchUndo] = field(default_factory=list)
 
     @property
     def source(self):
@@ -67,6 +86,17 @@ class Project:
     @property
     def is_record(self):
         return self.mode == "record"
+
+    def take_segments(self):
+        """[(start, end, take number)] over the recording; 0 = original take."""
+        segments = [[0.0, self.duration, 0]]
+        for punch in self.punches:
+            # A later punch replaces everything after its start, even earlier punches.
+            segments = [s for s in segments if s[0] < punch.start]
+            if segments:
+                segments[-1][1] = punch.start
+            segments.append([punch.start, self.duration, punch.number])
+        return [tuple(s) for s in segments if s[1] - s[0] > 1e-6]
 
     @property
     def output_duration(self):
@@ -99,6 +129,10 @@ class Project:
             bounded(c.start, prev, self.duration, "片段起點")
             bounded(c.end, c.start + 0.001, self.duration + 0.001, "片段終點")
             prev = c.end
+        for punch in self.punches:
+            bounded(punch.start, 0, self.duration, "重錄起點")
+        if len(self.punch_undo) != len(self.punches):
+            raise ValueError("重錄紀錄不完整")
 
     def split(self, position):
         for i, c in enumerate(self.clips):
@@ -140,6 +174,8 @@ class Project:
             if data[key]:
                 # Absolute paths support drives different from the project drive.
                 data[key] = str(Path(data[key]).resolve())
+        for undo in data["punch_undo"]:
+            undo["recording"] = str(Path(undo["recording"]).resolve())
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
@@ -156,7 +192,10 @@ class Project:
             effects = data.pop("effects")
             effects["bands"] = [EQBand(**b) for b in effects["bands"]]
             clips = [Clip(**c) for c in data.pop("clips")]
-            p = cls(**data, effects=Effects(**effects), clips=clips)
+            punches = [Punch(**x) for x in data.pop("punches", [])]
+            undo = [PunchUndo(u["recording"], u["duration"], [Clip(**c) for c in u.get("clips", [])])
+                    for u in data.pop("punch_undo", [])]
+            p = cls(**data, effects=Effects(**effects), clips=clips, punches=punches, punch_undo=undo)
         except (KeyError, TypeError, AttributeError) as exc:
             raise ValueError("專案檔格式不正確或缺少必要欄位") from exc
         for name in ("video", "backing", "recording"):
