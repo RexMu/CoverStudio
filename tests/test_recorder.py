@@ -375,10 +375,6 @@ class HelperTests(unittest.TestCase):
         self.assertAlmostEqual(recording_offset(3.0, 38.5), 3.0385)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ClipDetectionTest(unittest.TestCase):
     def test_single_hot_samples_are_not_clipping(self):
         self.assertFalse(recorder.is_clipping(np.array([0, 1, 0, -1, 0, 1], np.float32)))
@@ -388,3 +384,7 @@ class ClipDetectionTest(unittest.TestCase):
         block = np.zeros(200, np.float32)
         block[50:53] = -1
         self.assertTrue(recorder.is_clipping(block))
+
+
+if __name__ == "__main__":
+    unittest.main()
