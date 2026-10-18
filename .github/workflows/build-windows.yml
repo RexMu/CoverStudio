@@ -1,0 +1,79 @@
+name: Windows 安裝檔
+
+# 手動：Actions 頁面 → 「Windows 安裝檔」→ Run workflow
+# 自動：push 版本 tag（例如 v0.6）時打包並附加到 GitHub Release
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: '1'
+      FFMPEG_ZIP: ffmpeg-n7.1-latest-win64-gpl-7.1.zip
+      FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-7.1.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: 下載 FFmpeg 7.1（BtbN GPL static build）
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest $env:FFMPEG_URL -OutFile $env:FFMPEG_ZIP
+          $sha = (Get-FileHash $env:FFMPEG_ZIP -Algorithm SHA256).Hash
+          Expand-Archive $env:FFMPEG_ZIP -DestinationPath ffmpeg-dl
+          $root = Get-ChildItem ffmpeg-dl -Directory | Select-Object -First 1
+          Copy-Item "$($root.FullName)\bin\ffmpeg.exe" tools\
+          Copy-Item "$($root.FullName)\bin\ffprobe.exe" tools\
+          New-Item -ItemType Directory -Force tools\licenses | Out-Null
+          Copy-Item "$($root.FullName)\LICENSE.txt" tools\licenses\FFmpeg-LICENSE.txt
+          $ver = (& .\tools\ffmpeg.exe -version | Select-Object -First 1)
+          @(
+            '供應者：BtbN/FFmpeg-Builds（GPL static build，含 libx264）'
+            "版本：$ver"
+            "下載位置：$env:FFMPEG_URL"
+            "SHA256（zip）：$sha"
+            '原始碼：https://github.com/BtbN/FFmpeg-Builds 與 https://ffmpeg.org/download.html'
+            "建置：GitHub Actions run $env:GITHUB_RUN_ID（commit $env:GITHUB_SHA）"
+          ) | Set-Content tools\licenses\BUILD.txt -Encoding utf8
+          Get-Content tools\licenses\BUILD.txt
+
+      - name: 準備 Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and
+              -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: 建立 venv、測試、打包安裝檔
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\scripts\build-windows.ps1 -Installer
+
+      - name: 上傳安裝檔
+        uses: actions/upload-artifact@v4
+        with:
+          name: SaxCoverStudio-Windows-Setup
+          path: dist/installer/*.exe
+          if-no-files-found: error
+
+      - name: 附加到 Release（僅 tag）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/installer/*.exe
+          prerelease: true
