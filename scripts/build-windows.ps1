@@ -7,8 +7,11 @@ foreach ($name in @('ffmpeg.exe', 'ffprobe.exe')) {
         throw "請先將 $name 放進 tools 資料夾。詳見 README.md。"
     }
 }
-& .\tools\ffmpeg.exe -version | Select-Object -First 1
+# Capture all output first: cutting the pipe early (Select-Object -First 1)
+# can stop ffmpeg mid-write and report a bogus failure exit code.
+$SaxFfmpegVersion = & .\tools\ffmpeg.exe -version
 if ($LASTEXITCODE -ne 0) { throw 'FFmpeg 無法執行。' }
+$SaxFfmpegVersion | Select-Object -First 1
 if (-not (Test-Path '.venv\Scripts\python.exe')) {
     & py -3.12 -m venv .venv
     if ($LASTEXITCODE -ne 0) { throw '請先安裝 Python 3.12（64 位元）。' }
