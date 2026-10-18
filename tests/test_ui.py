@@ -464,9 +464,9 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.7")
+        self.assertEqual(VERSION_LABEL, "Beta V0.8")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
-        self.assertIn("Beta V0.7", self.window.windowTitle())
+        self.assertIn("Beta V0.8", self.window.windowTitle())
         sheet = style_sheet()
         self.assertNotIn("@UP@", sheet)
         for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):
@@ -593,14 +593,23 @@ with TemporaryDirectory() as config:
         self.assertTrue(dialog.apply_button.isEnabled())
         self.assertEqual(dialog.result_ms, 38.5)
 
+    def test_short_device_names(self):
+        from saxstudio.record_panel import short_device
+        self.assertEqual(short_device("Microphone Array (Intel® Smart Sound Technology for Digital Microphones)"),
+                         "Microphone Array")
+        self.assertEqual(short_device("Speakers (Realtek(R) Audio)"), "Speakers")
+        self.assertTrue(short_device("A Very Long Interface Name Without Brackets").endswith("…"))
+
     def test_record_panel_settings_fold_and_punch(self):
         from saxstudio.record_panel import RecordPanel
         panel = RecordPanel()
         panel.set_settings_expanded(False)
         self.assertTrue(panel.fold_body.isHidden())
-        self.assertIn("延遲尚未校正", panel.summary.text())
+        self.assertFalse(panel.latency_warn.isHidden())
         panel.set_latency(14.6)
         self.assertIn("14.6 ms", panel.summary.text())
+        self.assertTrue(panel.latency_warn.isHidden())
+        self.assertNotIn("\n", panel.summary.text())
         panel.set_settings_expanded(True)
         self.assertFalse(panel.fold_body.isHidden())
         panel.set_state("punch")

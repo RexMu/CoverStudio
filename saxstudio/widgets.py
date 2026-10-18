@@ -58,12 +58,18 @@ class EQGraph(QtWidgets.QWidget):
         p.drawPath(path)
 
 
-# Track-1 colour per take in record mode: original, then punch-ins (cycled).
-TAKE_COLORS = ("#27c9c3", "#ff9a4a", "#a08bff", "#ff7eb6", "#7bd88f", "#5aa9ff")
+# Record mode colours. Each recording track has a clearly different first
+# colour (teal / orange / violet; the backing is gold). Punch-ins draw from a
+# separate high-contrast palette containing none of those, starting at a
+# different place per track; repeats after six are fine.
+TRACK_COLORS = ("#27c9c3", "#ff8a3d", "#a77bff")
+PUNCH_COLORS = ("#ff6fae", "#7bd88f", "#5aa9ff", "#f25f5c", "#d4e36b", "#e6e9ef")
 
 
-def take_color(number):
-    return TAKE_COLORS[0] if number <= 0 else TAKE_COLORS[1 + (number - 1) % (len(TAKE_COLORS) - 1)]
+def take_color(number, track=0):
+    if number <= 0:
+        return TRACK_COLORS[track % len(TRACK_COLORS)]
+    return PUNCH_COLORS[(track * 2 + number - 1) % len(PUNCH_COLORS)]
 
 
 class Timeline(QtWidgets.QWidget):
@@ -81,6 +87,9 @@ class Timeline(QtWidgets.QWidget):
         self.video_duration = None
         self.override_duration = None
         self.empty_text = "匯入影片與伴奏後，波形會顯示在這裡"
+        # During a punch-in: (start, times, peaks, colour) of the new take, drawn
+        # over track 1 from `start`; the old take is shown only before it.
+        self.punch_live = None
         self.position = 0
         self.selected = -1
         self.setMinimumHeight(170)
@@ -158,7 +167,17 @@ class Timeline(QtWidgets.QWidget):
             if len(wave):
                 for pixel in range(12, self.width()-12):
                     t = self.x_time(pixel)-offset
+                    if row == 0 and self.punch_live is not None and t >= self.punch_live[0]:
+                        start, times, peaks, live_color = self.punch_live
+                        if len(times) and t <= times[-1]:
+                            i = min(len(peaks) - 1, int(np.searchsorted(times, t)))
+                            height = float(peaks[i]) * track_h * .38
+                            p.setPen(QtGui.QPen(QtGui.QColor(theme.c(live_color)), 1))
+                            p.drawLine(QtCore.QPointF(pixel, mid - height), QtCore.QPointF(pixel, mid + height))
+                        continue
                     if 0 <= t < duration:
+                        if row == 0 and self.punch_live is not None:
+                            p.setPen(QtGui.QPen(QtGui.QColor(theme.c(color)), 1))
                         if row == 0 and segments:
                             number = next((s[2] for s in segments if s[0] <= t < s[1]), segments[-1][2])
                             p.setPen(QtGui.QPen(QtGui.QColor(theme.c(take_color(number))), 1))
@@ -230,5 +249,5 @@ def _shared(name):
 
 
 for _name in ("video_wave", "back_wave", "back_duration", "video_duration",
-              "override_duration", "empty_text"):
+              "override_duration", "empty_text", "punch_live"):
     setattr(MirrorTimeline, _name, _shared(_name))

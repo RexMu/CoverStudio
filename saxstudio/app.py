@@ -20,7 +20,7 @@ from .media import active_range, decode_mono, decode_stereo, probe, thumbnail, w
 from .model import Clip, Effects, Project, Punch, PunchUndo
 from .record_panel import CalibrationDialog, NewProjectDialog, RecordPanel
 from .qt import QT6, QtCore, QtGui, QtMultimedia, QtWidgets as W, QtMultimediaWidgets, player, source, state_stopped
-from .widgets import EQGraph, Timeline, Worker
+from .widgets import EQGraph, Timeline, Worker, take_color
 
 VIDEO_FILTER = "影片 (*.mp4 *.mov *.mkv *.avi *.webm);;所有檔案 (*)"
 AUDIO_FILTER = "伴奏 (*.mp3 *.wav *.flac *.m4a *.aac *.ogg);;所有檔案 (*)"
@@ -1150,6 +1150,11 @@ class MainWindow(W.QMainWindow):
 
     def on_record_level(self, peak):
         self.record_panel.set_level(peak)
+        if self.punch is not None:
+            if self.punch["heard"] >= self.punch["start"]:
+                self.punch["times"].append(self.punch["heard"])
+                self.punch["peaks"].append(peak)
+            return
         if self.recording_active:
             self.live_peaks.append(peak)
 
@@ -1157,7 +1162,15 @@ class MainWindow(W.QMainWindow):
         if self.punch is not None:
             # `seconds` counts from the take start; playback starts ~immediately.
             heard = self.punch["begin"] + seconds
+            self.punch["heard"] = heard
             self.record_panel.set_punch_progress(self.punch["start"] - heard, heard, left)
+            now = QtCore.QDateTime.currentMSecsSinceEpoch()
+            if now - self.live_update > 120 and self.punch["peaks"]:
+                self.live_update = now
+                peaks = np.array(self.punch["peaks"], dtype=float)
+                start, _t, _p, color = self.timeline.punch_live
+                self.timeline.punch_live = (start, np.array(self.punch["times"]),
+                                            np.clip(peaks / max(.05, float(peaks.max())), 0, 1), color)
             self.timeline.position = min(heard, self.timeline.total())
             self.timeline.update()
             return
@@ -1181,6 +1194,7 @@ class MainWindow(W.QMainWindow):
             self.finish_punch(result)
             return
         self.recording_active = False
+        self.record_panel.restore_hint()
         latency = self.current_latency() or 0.0
         offset = recorder.recording_offset(result.start_offset, latency)
         path = result.path
@@ -1242,19 +1256,30 @@ class MainWindow(W.QMainWindow):
         path = self.recordings_dir() / f"錄音-{stamp}-重錄{len(self.project.punches) + 1}.wav"
         self.record_panel.reset_clip()
         self.record_panel.clip_label.setText("重錄中…")
-        self.punch = {"start": start, "begin": begin}
+        self.punch = {"start": start, "begin": begin, "heard": begin, "times": [], "peaks": []}
         if not self.session.start_take(str(path), self.selected_output(), mix, 1.0, 0):
             self.punch = None
             return
         self.recording_active = True
+        # Timeline spans the whole backing so the playhead and the new take can
+        # run past the end of the old recording.
+        self.timeline.override_duration = max(self.project.duration, begin + len(mix) / 48000 + 2.5)
+        self.timeline.punch_live = (start, np.array([]), np.array([]),
+                                    take_color(len(self.project.punches) + 1))
         self.record_panel.set_state("punch")
         self.record_panel.set_punch_progress(start - begin, begin, -1)
         self.refresh()
         self.statusBar().showMessage(f"重錄中 · 起點 {clock(start)} · 檔案：{path}")
 
+    def end_punch_display(self):
+        self.timeline.punch_live = None
+        self.timeline.override_duration = None
+        self.record_panel.restore_hint()
+
     def finish_punch(self, result):
         punch, self.punch = self.punch, None
         self.recording_active = False
+        self.end_punch_display()
         p = self.project
         latency = self.current_latency() or 0.0
         old_path = p.recording
@@ -1328,6 +1353,8 @@ class MainWindow(W.QMainWindow):
         if self.recording_active:
             self.recording_active = False
             self.punch = None
+            self.timeline.punch_live = None
+            self.record_panel.restore_hint()
             self.record_panel.set_state("done" if self.project.recording else "ready")
             self.timeline.override_duration = None if self.project.recording else (self.timeline.back_duration or None)
             self.timeline.video_duration = None

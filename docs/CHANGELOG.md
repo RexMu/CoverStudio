@@ -1,3 +1,14 @@
+# Sax Cover Studio Beta V0.8
+
+以 Beta V0.7 為基礎。
+
+- 錄音面板：折疊標題改為整列透明 `QPushButton#foldButton`（▸／▾）；摘要用 `ElidedLabel` 單行省略、`short_device()` 去掉括號內的驅動說明；延遲未校正改為標題右側 `latency_warn`；`restore_hint()` 在錄音結束／失敗後還原提示文字。
+- 中途重錄：`Timeline.punch_live`（起點、時間、峰值、顏色）即時畫新錄音，`override_duration` 延伸到伴奏結束。
+- 配色：`widgets.TRACK_COLORS`（各軌初始色）與 `PUNCH_COLORS`（重錄色盤，依軌錯開起點）。
+- CI：手動執行可取消「打包安裝檔」，只跑測試。
+
+---
+
 # Sax Cover Studio Beta V0.7
 
 以 Beta V0.6 為基礎。

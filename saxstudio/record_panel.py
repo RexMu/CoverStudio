@@ -11,6 +11,54 @@ def db(value):
     return 20 * math.log10(max(value, 1e-6))
 
 
+LEVEL_HINT = "試吹最大聲的段落，峰值落在黃色區（-12～-6 dB）最理想"
+
+
+def short_device(name, limit=18):
+    """Readable device name: drop the driver detail in brackets, then elide.
+
+    "Microphone Array (Intel® Smart Sound …)" -> "Microphone Array".
+    """
+    text = (name or "").strip()
+    depth, out = 0, []
+    for ch in text:
+        if ch in "(（":
+            depth += 1
+        elif ch in ")）":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            out.append(ch)
+    short = " ".join("".join(out).split()) or text
+    return short if len(short) <= limit else short[:limit - 1].rstrip() + "…"
+
+
+class ElidedLabel(W.QLabel):
+    """One-line label that ends in "…" when too narrow; full text in the tooltip."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full = ""
+        self.setMinimumWidth(40)
+        self.setSizePolicy(W.QSizePolicy.Ignored, W.QSizePolicy.Fixed)
+        self.setText(text)
+
+    def setText(self, text):
+        self._full = text or ""
+        self.setToolTip(self._full)
+        self._elide()
+
+    def text(self):
+        return self._full
+
+    def _elide(self):
+        metrics = self.fontMetrics()
+        super().setText(metrics.elidedText(self._full, QtCore.Qt.ElideRight, max(10, self.width())))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+
 class LevelMeter(W.QWidget):
     """Segmented peak meter, -60 to 0 dBFS, with peak hold and clip latch."""
     SEGMENTS = 30
@@ -111,25 +159,28 @@ class RecordPanel(W.QFrame):
         fold_box.setContentsMargins(10, 6, 10, 8)
         fold_box.setSpacing(4)
         fold_head = W.QHBoxLayout()
-        self.fold_button = W.QToolButton()
+        fold_head.setSpacing(8)
+        # The whole header row is one flat, transparent button (text + arrow).
+        self.fold_button = W.QPushButton("▸  ⚙ 錄音設定")
         self.fold_button.setObjectName("foldButton")
-        self.fold_button.setText("⚙ 錄音設定")
         self.fold_button.setCheckable(True)
-        self.fold_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.fold_button.setArrowType(QtCore.Qt.RightArrow)
+        self.fold_button.setFlat(True)
+        self.fold_button.setCursor(QtCore.Qt.PointingHandCursor)
+        self.fold_button.setSizePolicy(W.QSizePolicy.Expanding, W.QSizePolicy.Fixed)
         self.fold_button.setAccessibleName("展開或收合錄音設定")
-        theme.apply(self.fold_button, "QToolButton { border: none; font-weight: 600; padding: 2px 0; }")
+        theme.apply(self.fold_button,
+                    "QPushButton#foldButton, QPushButton#foldButton:checked, QPushButton#foldButton:hover,"
+                    " QPushButton#foldButton:pressed { background: transparent; border: none;"
+                    " font-weight: 600; text-align: left; padding: 2px 0; color: #dbe6f0; }"
+                    " QPushButton#foldButton:hover { color: #75ded5; }")
         self.fold_button.toggled.connect(self.set_settings_expanded)
-        fold_head.addWidget(self.fold_button)
-        fold_head.addStretch()
-        self.fold_hint = W.QLabel("展開")
-        self.fold_hint.setObjectName("muted")
-        fold_head.addWidget(self.fold_hint)
+        fold_head.addWidget(self.fold_button, 1)
+        self.latency_warn = W.QLabel("⚠ 延遲尚未校正")
+        theme.apply(self.latency_warn, "color: #e9b853; font-size: 12px;")
+        fold_head.addWidget(self.latency_warn)
         fold_box.addLayout(fold_head)
-        self.summary = W.QLabel("")
+        self.summary = ElidedLabel("")
         self.summary.setObjectName("muted")
-        self.summary.setWordWrap(True)
-        self.summary.setTextFormat(QtCore.Qt.RichText)
         fold_box.addWidget(self.summary)
         self.fold_body = W.QWidget()
         body = W.QVBoxLayout(self.fold_body)
@@ -174,7 +225,8 @@ class RecordPanel(W.QFrame):
             theme.apply(mark, "color: #6f8396; font-size: 10px;")
             scale.addWidget(mark)
         layout.addLayout(scale)
-        self.clip_label = W.QLabel("試吹最大聲的段落，峰值落在黃色區（-12～-6 dB）最理想")
+        self.clip_label = W.QLabel(LEVEL_HINT)
+        self.clip_label.setWordWrap(True)
         self.clip_label.setObjectName("muted")
         layout.addWidget(self.clip_label)
 
@@ -428,24 +480,29 @@ class RecordPanel(W.QFrame):
             self.fold_button.blockSignals(True)
             self.fold_button.setChecked(expanded)
             self.fold_button.blockSignals(False)
-        self.fold_button.setArrowType(QtCore.Qt.DownArrow if expanded else QtCore.Qt.RightArrow)
-        self.fold_hint.setText("收合" if expanded else "展開")
+        self.fold_button.setText(("▾" if expanded else "▸") + "  ⚙ 錄音設定")
         self.fold_body.setVisible(expanded)
         self.summary.setVisible(not expanded)
         self.settings_toggled.emit(expanded)
 
     def update_summary(self):
         def name(combo):
-            return combo.currentText() or "—"
-        parts = [f"輸入：{name(self.input_combo)} · {name(self.channel_combo)}",
+            return short_device(combo.currentText()) if combo.currentText() else "—"
+        channel = self.channel_combo.currentData()
+        parts = [f"輸入：{name(self.input_combo)}" + (f" · 聲道 {int(channel) + 1}" if channel is not None else ""),
                  f"耳機：{name(self.output_combo)}"]
-        if self.latency_ms is None:
-            parts.append(f"<span style='color:{theme.c('#e9b853')}'>⚠ 延遲尚未校正</span>")
-        else:
+        if self.latency_ms is not None:
             parts.append(f"延遲 {self.latency_ms:.1f} ms")
         parts.append(f"伴奏 {self.volume_slider.value()/10:.1f} dB")
         parts.append(f"倒數 {self.countdown_combo.currentText() or '—'}")
-        self.summary.setText("　｜　".join(parts))
+        self.summary.setText("　|　".join(parts))
+        self.latency_warn.setVisible(self.latency_ms is None)
+
+    def restore_hint(self):
+        """Back to the level hint after a take (unless clipping was flagged)."""
+        if not self.meter.clipped:
+            self.clip_label.setText(LEVEL_HINT)
+            theme.apply(self.clip_label, "color: #91a4b9;")
 
     def set_unavailable(self, message):
         message = message or ""

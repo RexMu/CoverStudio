@@ -4,6 +4,11 @@ name: Windows 安裝檔
 # 自動：push 版本 tag（例如 v0.6）時打包並附加到 GitHub Release
 on:
   workflow_dispatch:
+    inputs:
+      installer:
+        description: '打包安裝檔（取消勾選＝只跑測試）'
+        type: boolean
+        default: true
   push:
     tags: ['v*']
 
@@ -63,6 +68,7 @@ jobs:
           Get-Content tools\licenses\BUILD.txt
 
       - name: 準備 Inno Setup
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.installer }}
         shell: pwsh
         run: |
           if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and
@@ -87,13 +93,14 @@ jobs:
           }
 
       - name: 打包安裝檔
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.installer }}
         shell: pwsh
         run: |
           try { .\scripts\build-windows.ps1 -Installer }
           catch { Write-Host "::error::打包失敗：$_"; exit 1 }
 
       - name: 上傳開機畫面（檢查字型用）
-        if: always()
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.installer) }}
         uses: actions/upload-artifact@v4
         with:
           name: boot-splash
@@ -101,6 +108,7 @@ jobs:
           if-no-files-found: warn
 
       - name: 上傳安裝檔
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.installer }}
         uses: actions/upload-artifact@v4
         with:
           name: SaxCoverStudio-Windows-Setup
