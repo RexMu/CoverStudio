@@ -106,6 +106,7 @@ jobs:
           name: boot-splash
           path: build/splash/boot-splash.png
           if-no-files-found: warn
+          retention-days: 1
 
       - name: 上傳安裝檔
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.installer }}
@@ -114,6 +115,7 @@ jobs:
           name: SaxCoverStudio-Windows-Setup
           path: dist/installer/*.exe
           if-no-files-found: error
+          retention-days: 3
 
       - name: 附加到 Release（僅 tag）
         if: startsWith(github.ref, 'refs/tags/')
