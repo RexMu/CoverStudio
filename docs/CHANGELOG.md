@@ -1,3 +1,14 @@
+# Sax Cover Studio Beta V0.9
+
+以 Beta V0.8 為基礎：錄音模式多軌（最多 3 軌）。
+
+- 模型：`Track`（名稱、錄音、長度、`backing_offset`、音量、靜音、聲道位置、效果、重錄紀錄）放在 `Project.tracks`；第一軌欄位仍在 `Project`，以 `MainTrack`／`Project.track(i)` 統一存取。每軌依伴奏對齊，在第一軌時間軸上的位置為 `offset - backing_offset`。新增 `track1_name`、`video_pan`、`backing_pan`；舊專案檔視為單軌。
+- 引擎：`render_mix` 每軌各自套 `effect_filters`（EQ／壓縮／混響）、音量、`pan_filter` 後與伴奏 `amix`，總輸出限幅器作用於全部。
+- 錄音：`recorder.monitor_mix`／`add_track` 產生耳機混音；`punch_playback(..., others=)` 在重錄時持續播放其他軌。新軌錄音（`MainWindow.fresh`）在自己的列上即時畫波形。
+- 介面：軌道分頁（`track_tabs`）、`＋ 新增錄音軌`、軌道列「⋯」選單、`PanDialog`、錄音面板 `set_target()`；`Timeline` 依軌數分列（`TOP/BOTTOM/GAP` 與左側控制列一致），點波形列可選軌。
+
+---
+
 # Sax Cover Studio Beta V0.8
 
 以 Beta V0.7 為基礎。

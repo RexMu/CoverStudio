@@ -53,6 +53,65 @@ class PunchUndo:
     clips: list[Clip] = field(default_factory=list)
 
 
+def take_segments(duration, punches):
+    """[(start, end, take number)] over a recording; 0 = original take."""
+    segments = [[0.0, duration, 0]]
+    for punch in punches:
+        # A later punch replaces everything after its start, even earlier punches.
+        segments = [s for s in segments if s[0] < punch.start]
+        if segments:
+            segments[-1][1] = punch.start
+        segments.append([punch.start, duration, punch.number])
+    return [tuple(s) for s in segments if s[1] - s[0] > 1e-6]
+
+
+@dataclass
+class Track:
+    """An extra recording track (record mode, tracks 2 and 3).
+
+    Each track is recorded against the backing on its own timeline;
+    `backing_offset` is where backing sample 0 lies on that timeline, so the
+    track sits at `project.offset - backing_offset` on track 1's timeline and
+    follows the backing when the project offset is adjusted.
+    """
+    name: str = "Tenor"
+    recording: str = ""
+    duration: float = 0.0
+    backing_offset: float = 0.0
+    db: float = 0.0
+    muted: bool = False
+    pan: float = 0.0
+    effects: Effects = field(default_factory=Effects)
+    punches: list[Punch] = field(default_factory=list)
+    punch_undo: list[PunchUndo] = field(default_factory=list)
+
+    def take_segments(self):
+        return take_segments(self.duration, self.punches)
+
+
+class MainTrack:
+    """Track 1 seen through the same interface as `Track` (fields live on Project)."""
+    _map = {"name": "track1_name", "recording": "recording", "duration": "duration",
+            "backing_offset": "offset", "db": "video_db", "muted": "video_muted", "pan": "video_pan",
+            "effects": "effects", "punches": "punches", "punch_undo": "punch_undo"}
+
+    def __init__(self, project):
+        object.__setattr__(self, "_project", project)
+
+    def __getattr__(self, name):
+        if name in MainTrack._map:
+            return getattr(self._project, MainTrack._map[name])
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        setattr(self._project, MainTrack._map[name], value)
+
+    def take_segments(self):
+        return take_segments(self.duration, self.punches)
+
+
+MAX_TRACKS = 3
+TRACK_NAMES = ("Alto", "Tenor", "Soprano", "Baritone", "人聲")
 MODES = ("video", "record")
 
 
@@ -77,6 +136,23 @@ class Project:
     # states before each of them, so they can be undone one by one.
     punches: list[Punch] = field(default_factory=list)
     punch_undo: list[PunchUndo] = field(default_factory=list)
+    # Multi-track (record mode): name/pan of track 1, extra tracks, backing pan.
+    track1_name: str = "Alto"
+    video_pan: float = 0.0
+    backing_pan: float = 0.0
+    tracks: list[Track] = field(default_factory=list)
+
+    def track(self, index):
+        """0 = track 1 (fields on the project), 1.. = extra tracks."""
+        return MainTrack(self) if index == 0 else self.tracks[index - 1]
+
+    @property
+    def track_count(self):
+        return 1 + len(self.tracks)
+
+    def track_shift(self, index):
+        """Where a track's own time 0 lies on track 1's timeline."""
+        return 0.0 if index == 0 else self.offset - self.tracks[index - 1].backing_offset
 
     @property
     def source(self):
@@ -88,15 +164,8 @@ class Project:
         return self.mode == "record"
 
     def take_segments(self):
-        """[(start, end, take number)] over the recording; 0 = original take."""
-        segments = [[0.0, self.duration, 0]]
-        for punch in self.punches:
-            # A later punch replaces everything after its start, even earlier punches.
-            segments = [s for s in segments if s[0] < punch.start]
-            if segments:
-                segments[-1][1] = punch.start
-            segments.append([punch.start, self.duration, punch.number])
-        return [tuple(s) for s in segments if s[1] - s[0] > 1e-6]
+        """[(start, end, take number)] over track 1's recording; 0 = original take."""
+        return take_segments(self.duration, self.punches)
 
     @property
     def output_duration(self):
@@ -112,7 +181,17 @@ class Project:
         bounded(self.offset, -86400, 86400, "伴奏位移")
         for v in (self.video_db, self.backing_db):
             bounded(v, -60, 12, "音量")
-        fx = self.effects
+        for fx in [self.effects] + [t.effects for t in self.tracks]:
+            self._validate_effects(fx, bounded)
+        prev = 0.0
+        for c in self.clips:
+            bounded(c.start, prev, self.duration, "片段起點")
+            bounded(c.end, c.start + 0.001, self.duration + 0.001, "片段終點")
+            prev = c.end
+        self._validate_tracks(bounded)
+
+    @staticmethod
+    def _validate_effects(fx, bounded):
         for name, lo, hi in [("highpass", 0, 400), ("threshold", -60, 0),
                              ("ratio", 1, 20), ("attack", 0.1, 200),
                              ("release", 10, 2000), ("makeup", 0, 24),
@@ -124,15 +203,27 @@ class Project:
             bounded(b.frequency, 20, 20000, "EQ 頻率")
             bounded(b.gain, -18, 18, "EQ 增益")
             bounded(b.q, 0.1, 10, "EQ Q")
-        prev = 0.0
-        for c in self.clips:
-            bounded(c.start, prev, self.duration, "片段起點")
-            bounded(c.end, c.start + 0.001, self.duration + 0.001, "片段終點")
-            prev = c.end
+
+    def _validate_tracks(self, bounded):
         for punch in self.punches:
             bounded(punch.start, 0, self.duration, "重錄起點")
         if len(self.punch_undo) != len(self.punches):
             raise ValueError("重錄紀錄不完整")
+        if self.tracks and not self.is_record:
+            raise ValueError("只有錄音模式可以有多軌")
+        if self.track_count > MAX_TRACKS:
+            raise ValueError(f"最多 {MAX_TRACKS} 軌")
+        for v in (self.video_pan, self.backing_pan):
+            bounded(v, -1, 1, "聲道位置")
+        for t in self.tracks:
+            bounded(t.db, -60, 12, "音量")
+            bounded(t.pan, -1, 1, "聲道位置")
+            bounded(t.duration, 0, 86400, "錄音長度")
+            bounded(t.backing_offset, -86400, 86400, "伴奏位移")
+            for punch in t.punches:
+                bounded(punch.start, 0, t.duration, "重錄起點")
+            if len(t.punch_undo) != len(t.punches):
+                raise ValueError("重錄紀錄不完整")
 
     def split(self, position):
         for i, c in enumerate(self.clips):
@@ -176,6 +267,11 @@ class Project:
                 data[key] = str(Path(data[key]).resolve())
         for undo in data["punch_undo"]:
             undo["recording"] = str(Path(undo["recording"]).resolve())
+        for track in data["tracks"]:
+            if track["recording"]:
+                track["recording"] = str(Path(track["recording"]).resolve())
+            for undo in track["punch_undo"]:
+                undo["recording"] = str(Path(undo["recording"]).resolve())
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(path)
@@ -192,10 +288,25 @@ class Project:
             effects = data.pop("effects")
             effects["bands"] = [EQBand(**b) for b in effects["bands"]]
             clips = [Clip(**c) for c in data.pop("clips")]
+            def effects_of(raw):
+                raw = dict(raw)
+                raw["bands"] = [EQBand(**b) for b in raw["bands"]]
+                return Effects(**raw)
+
+            def undo_of(items):
+                return [PunchUndo(u["recording"], u["duration"], [Clip(**c) for c in u.get("clips", [])])
+                        for u in items]
             punches = [Punch(**x) for x in data.pop("punches", [])]
-            undo = [PunchUndo(u["recording"], u["duration"], [Clip(**c) for c in u.get("clips", [])])
-                    for u in data.pop("punch_undo", [])]
-            p = cls(**data, effects=Effects(**effects), clips=clips, punches=punches, punch_undo=undo)
+            undo = undo_of(data.pop("punch_undo", []))
+            tracks = []
+            for raw in data.pop("tracks", []):
+                raw = dict(raw)
+                raw["effects"] = effects_of(raw["effects"])
+                raw["punches"] = [Punch(**x) for x in raw.get("punches", [])]
+                raw["punch_undo"] = undo_of(raw.get("punch_undo", []))
+                tracks.append(Track(**raw))
+            p = cls(**data, effects=Effects(**effects), clips=clips, punches=punches, punch_undo=undo,
+                    tracks=tracks)
         except (KeyError, TypeError, AttributeError) as exc:
             raise ValueError("專案檔格式不正確或缺少必要欄位") from exc
         for name in ("video", "backing", "recording"):

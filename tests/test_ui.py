@@ -464,9 +464,9 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.8")
+        self.assertEqual(VERSION_LABEL, "Beta V0.9")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
-        self.assertIn("Beta V0.8", self.window.windowTitle())
+        self.assertIn("Beta V0.9", self.window.windowTitle())
         sheet = style_sheet()
         self.assertNotIn("@UP@", sheet)
         for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):
@@ -499,7 +499,7 @@ with TemporaryDirectory() as config:
         self.assertTrue(w.align_button.isHidden())
         self.assertFalse(w.record_offset_label.isHidden())
         self.assertIn("WAV", w.export_button.text())
-        self.assertEqual(w.track_names[0].text(), "第一軌 · 錄音")
+        self.assertEqual(w.track_names[0].text(), "第一軌 · Alto")
         self.assertFalse(w.play_button.isEnabled())
         self.assertFalse(w.export_button.isEnabled())
         self.assertAlmostEqual(w.timeline.override_duration, 4, delta=.05)
@@ -547,6 +547,71 @@ with TemporaryDirectory() as config:
         self.assertFalse(w.project.is_record)
         self.assertIs(w.right_stack.currentWidget(), w.video_section)
         self.assertFalse(w.align_button.isHidden())
+
+    def test_multitrack_add_record_effects_pan_save_delete(self):
+        from saxstudio.recorder import TakeResult
+        w = self.window
+        with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(self.padded_backing), "")):
+            w.new_record_project()
+        self.wait_job()
+        self.assertFalse(w.add_track_button.isEnabled())      # track 1 first
+        self.assertTrue(w.track_tabs.isHidden())
+        w.finish_recording(TakeResult(str(self.make_take()), 3.0, 48000, 1.0, .5))
+        self.wait_job()
+        self.assertTrue(w.add_track_button.isEnabled())
+        with patch.object(QtWidgets.QInputDialog, "getItem", return_value=("Tenor", True)):
+            w.add_track()
+        p = w.project
+        self.assertEqual([t.name for t in p.tracks], ["Tenor"])
+        self.assertEqual(w.selected_track, 1)
+        self.assertFalse(w.track_tabs.isHidden())
+        self.assertEqual(w.track_tabs.count(), 2)
+        self.assertIn("Tenor", w.fx_title.text())
+        self.assertIn("第 2 軌", w.record_panel.record_button.text())
+        self.assertFalse(w.record_panel.target_box.isHidden())
+        self.assertIn("1 Alto", w.record_panel.monitor_label.text())
+        self.assertEqual(w.timeline.row_count(), 3)
+        # Effects are per track.
+        w.eq_toggle.setChecked(True)
+        self.assertTrue(p.tracks[0].effects.eq_enabled)
+        self.assertFalse(p.effects.eq_enabled)
+        w.select_track(0)
+        self.assertFalse(w.eq_toggle.isChecked())
+        w.select_track(1)
+        self.assertTrue(w.eq_toggle.isChecked())
+        # A finished take on track 2 aligns to the backing on its own timeline.
+        w.fresh = {"track": 1, "length": 4.0, "times": [], "peaks": [], "heard": None}
+        w.recording_active = True
+        w.finish_recording(TakeResult(str(self.make_take()), 3.0, 48000, 1.5, .4))
+        self.wait_job()
+        latency = (w.current_latency() or 0) / 1000
+        self.assertAlmostEqual(p.tracks[0].backing_offset, 1.5 + latency, places=6)
+        self.assertAlmostEqual(p.track_shift(1), p.offset - p.tracks[0].backing_offset, places=9)
+        self.assertEqual(len(w.timeline.extra_waves[0]) > 0, True)
+        self.assertEqual(w.record_panel.states.currentIndex(), 2)
+        # Pan dialog.
+        from saxstudio.record_panel import PanDialog
+        with patch.object(PanDialog, "exec", return_value=True), patch.object(PanDialog, "values",
+                                                                               return_value=[-.25, .3, 0]):
+            w.open_pan_dialog()
+        self.assertEqual((p.video_pan, p.tracks[0].pan, p.backing_pan), (-.25, .3, 0))
+        w.prepare_preview(False)
+        self.wait_job()
+        self.assertTrue(Path(w.preview_path).is_file())
+        path = self.root/"多軌專案.saxproj"
+        with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(path), "")):
+            w.save_project()
+        with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(path), "")):
+            w.open_project()
+        self.wait_job()
+        self.assertEqual(w.project.tracks[0].name, "Tenor")
+        self.assertEqual(len(w.extra_rows), 1)
+        self.assertTrue(w.project.tracks[0].effects.eq_enabled)
+        with patch.object(QtWidgets.QMessageBox, "question", return_value=QtWidgets.QMessageBox.Yes):
+            w.delete_track(1)
+        self.assertEqual(w.project.tracks, [])
+        self.assertTrue(w.track_tabs.isHidden())
+        self.assertEqual(w.selected_track, 0)
 
     def test_new_project_dialog_routes_to_mode(self):
         from saxstudio.record_panel import NewProjectDialog

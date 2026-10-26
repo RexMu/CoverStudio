@@ -150,6 +150,20 @@ class RecordPanel(W.QFrame):
         self.format_label.setObjectName("muted")
         head.addWidget(self.format_label)
         layout.addLayout(head)
+        # Multi-track: which track the next take goes to, and what is heard.
+        self.target_box = W.QFrame()
+        self.target_box.setObjectName("targetBox")
+        target_layout = W.QVBoxLayout(self.target_box)
+        target_layout.setContentsMargins(10, 6, 10, 6)
+        target_layout.setSpacing(2)
+        self.target_label = W.QLabel("")
+        theme.apply(self.target_label, "font-weight: 700;")
+        target_layout.addWidget(self.target_label)
+        self.monitor_label = ElidedLabel("")
+        self.monitor_label.setObjectName("muted")
+        target_layout.addWidget(self.monitor_label)
+        self.target_box.hide()
+        layout.addWidget(self.target_box)
 
         # ---- settings fold: devices, countdown, headphone volume, latency
         self.fold = W.QFrame()
@@ -454,6 +468,21 @@ class RecordPanel(W.QFrame):
         self.undo_hint.setText(f"可連續復原 {punches} 次")
         self.set_state("done")
 
+    def set_target(self, index, name, color, monitors=None):
+        """Show the record target when the project has more than one track."""
+        multi = monitors is not None
+        self.target_box.setVisible(multi)
+        number = index + 1
+        self.record_button.setText(f"●  開始錄第 {number} 軌" if multi else "●  開始錄音")
+        if not multi:
+            return
+        theme.apply(self.target_box, f"QFrame#targetBox {{ background: #1a2230; border: 1px solid {color};"
+                                     " border-radius: 6px; }")
+        self.target_label.setText(f"錄到：第 {number} 軌 · {name}")
+        theme.apply(self.target_label, f"font-weight: 700; color: {color};")
+        heard = " ＋ ".join(monitors) if monitors else "（只有麥克風）"
+        self.monitor_label.setText(f"耳機會聽到：{heard}（靜音的軌不會播）")
+
     def set_punch_point(self, seconds):
         minutes, rest = divmod(max(0.0, seconds), 60)
         self.punch_button.setText(f"●  從 {int(minutes):02}:{rest:04.1f} 重錄到結尾")
@@ -563,6 +592,68 @@ class NewProjectDialog(W.QDialog):
             card.setChecked(k == key)
         self.next_button.setEnabled(True)
         self.next_button.setText("下一步：選擇影片" if key == "video" else "下一步：匯入伴奏")
+
+
+class PanDialog(W.QDialog):
+    """Left/right position per track (and the backing), in its own window."""
+
+    def __init__(self, rows, describe, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("聲道位置")
+        self.setMinimumWidth(520)
+        self.describe = describe
+        layout = W.QVBoxLayout(self)
+        layout.setContentsMargins(22, 18, 22, 16)
+        layout.setSpacing(10)
+        title = W.QLabel("🎚 聲道位置")
+        theme.apply(title, "font-size: 18px; font-weight: 700;")
+        layout.addWidget(title)
+        hint = W.QLabel("合奏時把各聲部稍微左右分開，聽起來更清楚。只影響播放與匯出，不影響錄音。")
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        grid = W.QGridLayout()
+        grid.setHorizontalSpacing(12)
+        self.sliders = []
+        for i, (name, color, pan) in enumerate(rows):
+            label = W.QLabel(name)
+            theme.apply(label, f"color: {color}; font-weight: 700;")
+            grid.addWidget(label, i, 0)
+            left = W.QLabel("L")
+            left.setObjectName("muted")
+            grid.addWidget(left, i, 1)
+            slider = W.QSlider(QtCore.Qt.Horizontal)
+            slider.setRange(-100, 100)
+            slider.setValue(round(pan * 100))
+            slider.setAccessibleName(f"{name} 聲道位置")
+            grid.addWidget(slider, i, 2)
+            right = W.QLabel("R")
+            right.setObjectName("muted")
+            grid.addWidget(right, i, 3)
+            value = W.QLabel(describe(pan))
+            value.setMinimumWidth(52)
+            value.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            grid.addWidget(value, i, 4)
+            slider.valueChanged.connect(lambda v, label=value: label.setText(self.describe(v / 100)))
+            self.sliders.append(slider)
+        grid.setColumnStretch(2, 1)
+        layout.addLayout(grid)
+        buttons = W.QHBoxLayout()
+        center = W.QPushButton("全部置中")
+        center.clicked.connect(lambda: [s.setValue(0) for s in self.sliders])
+        buttons.addWidget(center)
+        buttons.addStretch()
+        cancel = W.QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        apply = W.QPushButton("套用")
+        apply.setObjectName("primary")
+        apply.clicked.connect(self.accept)
+        buttons.addWidget(apply)
+        layout.addLayout(buttons)
+
+    def values(self):
+        return [s.value() / 100 for s in self.sliders]
 
 
 class CalibrationDialog(W.QDialog):

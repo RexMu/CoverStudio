@@ -51,6 +51,43 @@ def shift_filter(offset):
     return f"atrim=start={-offset:.9f},asetpts=PTS-STARTPTS"
 
 
+def balance(pan):
+    """Left/right gains for a stereo balance control; centre keeps unity gain."""
+    pan = max(-1.0, min(1.0, float(pan)))
+    return 1.0 - max(0.0, pan), 1.0 + min(0.0, pan)
+
+
+def pan_filter(pan):
+    if abs(pan) < 1e-6:
+        return None
+    left, right = balance(pan)
+    return f"pan=stereo|c0={left:.6f}*c0|c1={right:.6f}*c1"
+
+
+def effect_filters(fx, source, label, ir_input, tag):
+    """EQ / compressor / reverb on `source`; result in `label`."""
+    chain = []
+    if fx.eq_enabled:
+        if fx.highpass > 0:
+            chain.append(f"highpass=f={fx.highpass}")
+        chain.extend(f"equalizer=f={b.frequency}:t=q:w={b.q}:g={b.gain}" for b in fx.bands)
+    if fx.compressor_enabled:
+        chain.append(f"acompressor=threshold={10**(fx.threshold/20):.9f}:ratio={fx.ratio}:"
+                     f"attack={fx.attack}:release={fx.release}:makeup={10**(fx.makeup/20):.9f}:knee=2.8")
+    processed = f"[p{tag}]"
+    filters = [f"{source}{','.join(chain) or 'anull'}{processed}"]
+    if ir_input is not None:
+        filters += [f"{processed}asplit=2[dry{tag}][send{tag}]",
+                    f"[{ir_input}:a:0]aformat=sample_fmts=fltp:channel_layouts=stereo[ir{tag}]",
+                    f"[send{tag}][ir{tag}]afir=dry=1:wet=1:irnorm=-1:irfmt=input:minp=256[wet{tag}]",
+                    f"[dry{tag}]volume={1-fx.mix:.9f}[dl{tag}]",
+                    f"[wet{tag}]volume={fx.mix:.9f}[wl{tag}]",
+                    f"[dl{tag}][wl{tag}]amix=inputs=2:normalize=0:duration=first{label}"]
+    else:
+        filters.append(f"{processed}anull{label}")
+    return filters
+
+
 def render_mix(project: Project, output, cancel=None, progress=None):
     """Render full source timeline. Edits are applied only at export/playback."""
     project.validate()
@@ -59,58 +96,58 @@ def render_mix(project: Project, output, cancel=None, progress=None):
     info = probe(project.source, cancel)
     if not info["audio"]:
         raise ValueError("錄音沒有音訊" if project.is_record else "影片沒有音訊")
-    fx = project.effects
     output = Path(output)
+    head = ["asetpts=PTS-STARTPTS", f"aresample={RATE}", "aformat=sample_fmts=fltp:channel_layouts=stereo"]
     with tempfile.TemporaryDirectory(prefix="sax-render-") as folder:
-        ir = Path(folder) / "room.wav"
-        args = [binary("ffmpeg"), "-v", "error", "-y", "-i", project.source]
-        inputs = 1
-        if project.backing:
-            args += ["-i", project.backing]
-            inputs += 1
-        reverb = fx.reverb_enabled and fx.mix > 0
-        if reverb:
-            impulse(ir, fx.decay, fx.predelay)
-            args += ["-i", str(ir)]
-        filters = []
-        chain = ["asetpts=PTS-STARTPTS", f"aresample={RATE}",
-                 "aformat=sample_fmts=fltp:channel_layouts=stereo", shift_filter(audio_origin(info))]
-        if fx.eq_enabled:
-            if fx.highpass > 0:
-                chain.append(f"highpass=f={fx.highpass}")
-            chain.extend(f"equalizer=f={b.frequency}:t=q:w={b.q}:g={b.gain}" for b in fx.bands)
-        if fx.compressor_enabled:
-            chain.append(f"acompressor=threshold={10**(fx.threshold/20):.9f}:ratio={fx.ratio}:"
-                         f"attack={fx.attack}:release={fx.release}:makeup={10**(fx.makeup/20):.9f}:knee=2.8")
-        filters.append("[0:a:0]" + ",".join(chain) + "[processed]")
-        if reverb:
-            filters += ["[processed]asplit=2[dry][send]",
-                        f"[{inputs}:a:0]aformat=sample_fmts=fltp:channel_layouts=stereo[ir]",
-                        "[send][ir]afir=dry=1:wet=1:irnorm=-1:irfmt=input:minp=256[wet]",
-                        f"[dry]volume={1-fx.mix:.9f}[drylevel]",
-                        f"[wet]volume={fx.mix:.9f}[wetlevel]",
-                        "[drylevel][wetlevel]amix=inputs=2:normalize=0:duration=first[effected]"]
-        else:
-            filters.append("[processed]anull[effected]")
-        vg = 0 if project.video_muted else 10**(project.video_db/20)
-        filters.append(f"[effected]volume={vg:.9f},apad,atrim=duration={project.duration:.9f}[sax]")
-        if project.backing:
+        args = [binary("ffmpeg"), "-v", "error", "-y"]
+        inputs = []
+
+        def add_input(path):
+            nonlocal args
+            args += ["-i", str(path)]
+            inputs.append(path)
+            return len(inputs) - 1
+        # (input index, effects, shift on track 1's timeline, gain, pan) per recording track.
+        sources = [(add_input(project.source), project.effects, audio_origin(info),
+                    0 if project.video_muted else 10**(project.video_db/20), project.video_pan)]
+        for k, track in enumerate(project.tracks, start=1):
+            if track.recording and track.duration > 0:
+                sources.append((add_input(track.recording), track.effects, project.track_shift(k),
+                                0 if track.muted else 10**(track.db/20), track.pan))
+        backing = add_input(project.backing) if project.backing else None
+        filters, labels = [], []
+        for n, (index, fx, shift, gain, pan) in enumerate(sources):
+            ir_input = None
+            if fx.reverb_enabled and fx.mix > 0:
+                ir = Path(folder) / f"room{n}.wav"
+                impulse(ir, fx.decay, fx.predelay)
+                ir_input = add_input(ir)
+            source = f"[{index}:a:0]" + ",".join(head + [shift_filter(shift)]) + ","
+            filters += effect_filters(fx, source, f"[fx{n}]", ir_input, n)
+            tail = [f"volume={gain:.9f}"] + ([pan_filter(pan)] if pan_filter(pan) else []) + \
+                ["apad", f"atrim=duration={project.duration:.9f}"]
+            filters.append(f"[fx{n}]" + ",".join(tail) + f"[t{n}]")
+            labels.append(f"[t{n}]")
+        if backing is not None:
             bg = 0 if project.backing_muted else 10**(project.backing_db/20)
-            filters.append(f"[1:a:0]asetpts=PTS-STARTPTS,aresample={RATE},"
-                           "aformat=sample_fmts=fltp:channel_layouts=stereo,"
-                           f"{shift_filter(project.offset)},volume={bg:.9f},apad,"
-                           f"atrim=duration={project.duration:.9f}[backing]")
-            filters.append("[sax][backing]amix=inputs=2:normalize=0:duration=first[mixed]")
+            extra = [pan_filter(project.backing_pan)] if pan_filter(project.backing_pan) else []
+            filters.append(f"[{backing}:a:0]" + ",".join(head + [shift_filter(project.offset), f"volume={bg:.9f}"]
+                                                      + extra + ["apad", f"atrim=duration={project.duration:.9f}"])
+                           + "[backing]")
+            labels.append("[backing]")
+        if len(labels) > 1:
+            filters.append("".join(labels) + f"amix=inputs={len(labels)}:normalize=0:duration=first[mixed]")
         else:
-            filters.append("[sax]anull[mixed]")
-        if fx.limiter_enabled:
+            filters.append(f"{labels[0]}anull[mixed]")
+        if project.effects.limiter_enabled:
             filters.append(f"[mixed]alimiter=limit={LIMIT:.6f}:level=0:latency=1[out]")
         else:
             filters.append("[mixed]anull[out]")
         args += ["-filter_complex", ";".join(filters), "-map", "[out]", "-t", str(project.duration),
                  "-c:a", "pcm_f32le", "-f", "wav", str(output)]
         if progress:
-            progress("正在處理 EQ、壓縮、混響與雙軌混音…")
+            progress("正在處理 EQ、壓縮、混響與多軌混音…" if len(sources) > 1 else
+                     "正在處理 EQ、壓縮、混響與雙軌混音…")
         try:
             run(args, cancel)
         except BaseException:
@@ -128,7 +165,8 @@ def export(project: Project, destination, cancel=None, progress=None):
         raise ValueError("匯出格式請選擇 MP4、WAV 或 MP3")
     if project.is_record and destination.suffix.lower() == ".mp4":
         raise ValueError("錄音模式沒有畫面，請匯出 WAV 或 MP3")
-    if destination.resolve() in [Path(p).resolve() for p in (project.video, project.backing, project.recording) if p]:
+    sources = [project.video, project.backing, project.recording] + [t.recording for t in project.tracks]
+    if destination.resolve() in [Path(p).resolve() for p in sources if p]:
         raise ValueError("匯出檔不能覆蓋原始影片或伴奏")
     # Write next to the destination, then atomically replace after successful completion.
     with tempfile.TemporaryDirectory(prefix="sax-export-") as folder:

@@ -134,8 +134,37 @@ PREROLL = 3.0      # seconds heard before a punch-in point
 PUNCH_FADE = .02   # crossfade at the punch-in seam
 
 
+def add_track(out, mono, src_start, rate=48000, gain=1.0, pan=0.0):
+    """Add a mono track into stereo `out`; out[0] is the track's `src_start` seconds."""
+    if gain <= 0 or not len(mono):
+        return out
+    left, right = 1.0 - max(0.0, pan), 1.0 + min(0.0, pan)
+    s0 = int(round(src_start * rate))
+    dst, src = max(0, -s0), max(0, s0)
+    count = min(len(mono) - src, len(out) - dst)
+    if count > 0:
+        part = np.asarray(mono[src:src + count], np.float32) * gain
+        out[dst:dst + count, 0] += part * left
+        out[dst:dst + count, 1] += part * right
+    return out
+
+
+def monitor_mix(backing, others, rate=48000, backing_gain=1.0):
+    """Headphone mix for a new take on another track: the backing from its
+    start plus the other recorded tracks.
+
+    others: [(mono, backing_offset, gain, pan)] where backing_offset is the
+    backing's start on that track's own timeline.
+    """
+    out = np.asarray(backing, np.float32) * backing_gain
+    out = out.copy()
+    for mono, backing_offset, gain, pan in others:
+        add_track(out, mono, backing_offset, rate, gain, pan)
+    return np.clip(out, -1, 1)
+
+
 def punch_playback(backing, recording, offset, start, rate=48000, preroll=PREROLL,
-                   backing_gain=1.0):
+                   backing_gain=1.0, others=()):
     """Headphone mix for a punch-in.
 
     backing: float32 (frames, 2); recording: float32 mono, both at `rate`.
@@ -159,6 +188,9 @@ def punch_playback(backing, recording, offset, start, rate=48000, preroll=PREROL
     if fade:
         old[-fade:] *= np.linspace(1, 0, fade, dtype=np.float32)
     out[:len(old)] += old[:, None]
+    # Other tracks keep playing through the whole punch-in.
+    for mono, track_offset, gain, pan in others:
+        add_track(out, mono, begin - offset + track_offset, rate, gain, pan)
     return np.clip(out, -1, 1), begin
 
 

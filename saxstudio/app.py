@@ -17,9 +17,9 @@ from .alignment import align_files
 from .engine import audio_origin, export, render_mix
 from . import recorder
 from .media import active_range, decode_mono, decode_stereo, probe, thumbnail, waveform
-from .model import Clip, Effects, Project, Punch, PunchUndo
-from .record_panel import CalibrationDialog, NewProjectDialog, RecordPanel
-from .qt import QT6, QtCore, QtGui, QtMultimedia, QtWidgets as W, QtMultimediaWidgets, player, source, state_stopped
+from .model import MAX_TRACKS, TRACK_NAMES, Clip, Effects, Project, Punch, PunchUndo, Track
+from .record_panel import CalibrationDialog, NewProjectDialog, PanDialog, RecordPanel
+from .qt import QT6, QtCore, QtGui, QtMultimedia, QtWidgets as W, QtMultimediaWidgets, Signal, player, source, state_stopped
 from .widgets import EQGraph, Timeline, Worker, take_color
 
 VIDEO_FILTER = "影片 (*.mp4 *.mov *.mkv *.avi *.webm);;所有檔案 (*)"
@@ -144,6 +144,20 @@ def clock(seconds):
     return f"{ms//60000:02}:{ms//1000%60:02}.{ms%1000:03}"
 
 
+class TrackFrame(W.QFrame):
+    """A track's control row; clicking it selects the track."""
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+def pan_text(pan):
+    value = round(pan * 100)
+    return "中" if value == 0 else (f"左 {-value}" if value < 0 else f"右 {value}")
+
+
 class MainWindow(W.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -178,6 +192,10 @@ class MainWindow(W.QMainWindow):
         self.live_peaks = []
         self.live_update = 0
         self.punch = None        # {"start", "begin"} while a punch-in take runs
+        self.fresh = None        # a new take on an extra track: {"track", "length", "times", "peaks", "heard"}
+        self.take_track = 0      # track the current/last take records into
+        self.selected_track = 0  # track shown in the effects panel and recorded into
+        self.extra_rows = []     # control rows of the extra tracks
         self.inputs, self.outputs = [], []
         self.pending_since = 0.0
         self.last_resync = 0.0
@@ -251,7 +269,9 @@ class MainWindow(W.QMainWindow):
         self.import_back_button = button("匯入伴奏", self.import_backing)
         self.open_button = button("開啟專案", self.open_project)
         self.save_button = button("儲存專案", self.save_project)
-        for b in [self.new_button, self.import_back_button, self.open_button, self.save_button]:
+        self.pan_button = button("🎚 聲道位置…", self.open_pan_dialog)
+        self.pan_button.setToolTip("另開視窗調整各軌左右聲道位置")
+        for b in [self.new_button, self.import_back_button, self.open_button, self.save_button, self.pan_button]:
             toolbar.addWidget(b)
         self.project_label = W.QLabel("尚未匯入影片")
         self.project_label.setObjectName("muted")
@@ -275,6 +295,14 @@ class MainWindow(W.QMainWindow):
         theme.apply(fx_title, "color: #27c9c3; font-weight: 600;")
         fx_title.setToolTip("EQ、壓縮、混響只處理影片原音；匯入的伴奏不會套用這些效果")
         fx_header.addWidget(fx_title)
+        self.track_tabs = W.QTabBar()
+        self.track_tabs.setObjectName("trackTabs")
+        self.track_tabs.setDrawBase(False)
+        self.track_tabs.setExpanding(False)
+        self.track_tabs.setToolTip("切換要調整效果（與錄音）的軌")
+        self.track_tabs.currentChanged.connect(self.on_track_tab)
+        self.track_tabs.hide()
+        fx_header.addWidget(self.track_tabs)
         fx_header.addStretch()
         fx_layout.addLayout(fx_header)
         preset_row = W.QHBoxLayout()
@@ -428,6 +456,12 @@ class MainWindow(W.QMainWindow):
         self.v_split.setStretchFactor(1, 1)
         controls_layout.addWidget(self.v_split, 1)
         align_row = W.QHBoxLayout()
+        self.add_track_button = button("＋ 新增錄音軌", self.add_track)
+        self.add_track_button.setObjectName("addTrack")
+        theme.apply(self.add_track_button, "QPushButton#addTrack { background: #2a1a10; border: 1px solid #ff8a3d; "
+                                           "color: #ffd2ad; font-weight: 600; }"
+                                           "QPushButton#addTrack:disabled { color: #6f5a4a; border-color: #4a3a2e; background: #1c2430; }")
+        align_row.addWidget(self.add_track_button)
         self.edit_button = button("✂  時間剪輯…", self.open_edit_dialog)
         self.edit_button.setObjectName("editButton")
         self.edit_button.setToolTip("開啟時間剪輯視窗：看著畫面與波形設定起訖、分割、刪除片段")
@@ -455,50 +489,29 @@ class MainWindow(W.QMainWindow):
         align_row.addWidget(self.offset)
         lower.addLayout(align_row)
         tracks = W.QHBoxLayout()
-        track_controls = W.QVBoxLayout()
-        track_controls.setContentsMargins(0, 28, 0, 6)
+        track_controls = self.track_controls = W.QVBoxLayout()
+        # Same top/bottom/gap as the timeline lanes, so each row sits beside its waveform.
+        track_controls.setContentsMargins(0, Timeline.TOP, 0, Timeline.BOTTOM)
+        track_controls.setSpacing(Timeline.GAP)
         self.volume_fields = []
-        self.track_names, self.track_hints = [], []
-        for label, color, value, hint in [
+        self.track_names, self.track_hints, self.track_frames = [], [], []
+        for index, (label, color, value, hint) in enumerate([
                 ("第一軌 · 影片原音", "#27c9c3", 0, "套用上方 EQ／壓縮／混響"),
-                ("第二軌 · 伴奏", "#e9b853", -6, "只調整音量與位移，不套用音效")]:
-            frame = W.QFrame()
-            frame.setObjectName("card")
-            f = W.QVBoxLayout(frame)
-            name = W.QLabel(label)
-            theme.apply(name, f"color: {color}; font-weight: 600;")
-            head = W.QHBoxLayout()
-            head.addWidget(name)
-            head.addStretch()
-            hint_label = W.QLabel(hint)
-            hint_label.setObjectName("muted")
-            self.track_names.append(name)
-            self.track_hints.append(hint_label)
-            head.addWidget(hint_label)
-            f.addLayout(head)
-            row = W.QHBoxLayout()
-            slider = W.QSlider(QtCore.Qt.Horizontal)
-            slider.setRange(-600, 120)
-            slider.setValue(value*10)
-            field = spin(-60, 12, value, 1, " dB")
-            field.setFixedWidth(85)
-            slider.valueChanged.connect(lambda v, f=field: f.setValue(v/10))
-            field.valueChanged.connect(lambda v, s=slider: s.setValue(round(v*10)))
-            mute = W.QCheckBox("靜音")
-            field.valueChanged.connect(self.change_mix)
-            mute.toggled.connect(self.change_mix)
-            row.addWidget(slider)
-            row.addWidget(field)
-            row.addWidget(mute)
-            f.addLayout(row)
-            track_controls.addWidget(frame)
-            self.volume_fields.append((field, mute))
-        track_widget = W.QWidget()
+                ("第二軌 · 伴奏", "#e9b853", -6, "只調整音量與位移，不套用音效")]):
+            row = self.make_track_row(label, color, value, hint, 0 if index == 0 else None)
+            track_controls.addWidget(row["frame"], 1)
+            self.track_names.append(row["name"])
+            self.track_hints.append(row["hint"])
+            self.track_frames.append(row["frame"])
+            self.volume_fields.append((row["field"], row["mute"]))
+        self.main_menu_button = self.track_frames[0].menu_button
+        track_widget = self.track_widget = W.QWidget()
         track_widget.setLayout(track_controls)
         track_widget.setFixedWidth(310)
         tracks.addWidget(track_widget)
         self.timeline = Timeline()
         self.timeline.seek.connect(self.seek)
+        self.timeline.track_clicked.connect(self.select_track)
         tracks.addWidget(self.timeline, 1)
         self.build_edit_dialog()  # creates clip_list (inside the edit window)
         self.timeline.select.connect(self.clip_list.setCurrentRow)
@@ -680,9 +693,241 @@ class MainWindow(W.QMainWindow):
             s = shortcut_type(QtGui.QKeySequence(key), self)
             s.activated.connect(fn)
 
+    # ------------------------------------------------------------ tracks
+    def make_track_row(self, label, color, value, hint, track_index):
+        frame = TrackFrame()
+        frame.setObjectName("card")
+        frame.setSizePolicy(W.QSizePolicy.Preferred, W.QSizePolicy.Expanding)
+        f = W.QVBoxLayout(frame)
+        f.setContentsMargins(10, 6, 10, 6)
+        f.setSpacing(4)
+        head = W.QHBoxLayout()
+        name = W.QLabel(label)
+        theme.apply(name, f"color: {color}; font-weight: 600;")
+        head.addWidget(name)
+        head.addStretch()
+        hint_label = W.QLabel(hint)
+        hint_label.setObjectName("muted")
+        head.addWidget(hint_label)
+        menu_button = W.QToolButton()
+        menu_button.setText("⋯")
+        menu_button.setAccessibleName("軌道選單")
+        menu_button.setToolTip("重新命名／清除錄音／刪除此軌")
+        menu_button.setVisible(track_index is not None)
+        head.addWidget(menu_button)
+        f.addLayout(head)
+        row = W.QHBoxLayout()
+        slider = W.QSlider(QtCore.Qt.Horizontal)
+        slider.setRange(-600, 120)
+        slider.setValue(round(value*10))
+        field = spin(-60, 12, value, 1, " dB")
+        field.setFixedWidth(85)
+        slider.valueChanged.connect(lambda v, f=field: f.setValue(v/10))
+        field.valueChanged.connect(lambda v, s=slider: s.setValue(round(v*10)))
+        mute = W.QCheckBox("靜音")
+        field.valueChanged.connect(self.change_mix)
+        mute.toggled.connect(self.change_mix)
+        row.addWidget(slider)
+        row.addWidget(field)
+        row.addWidget(mute)
+        f.addLayout(row)
+        frame.menu_button = menu_button
+        if track_index is not None:
+            frame.track_index = track_index
+            frame.clicked.connect(lambda fr=frame: self.select_track(fr.track_index))
+            menu_button.clicked.connect(lambda checked=False, fr=frame: self.show_track_menu(fr.track_index,
+                                                                                               fr.menu_button))
+        return {"frame": frame, "name": name, "hint": hint_label, "field": field, "mute": mute}
+
+    def track_label(self, index):
+        names = ("第一軌", "第二軌", "第三軌")
+        return f"{names[index]} · {self.project.track(index).name}"
+
+    def sync_tracks_ui(self):
+        """Rebuild the extra track rows, tabs and lanes after tracks change."""
+        p = self.project
+        rec = p.is_record
+        for row in self.extra_rows:
+            self.track_controls.removeWidget(row["frame"])
+            row["frame"].deleteLater()
+        self.extra_rows = []
+        for k, track in enumerate(p.tracks, start=1):
+            hint = "已錄 " + clock(track.duration)[:5] if track.recording else "未錄"
+            row = self.make_track_row(self.track_label(k), take_color(0, k), track.db, hint, k)
+            self.loading = True
+            row["mute"].setChecked(track.muted)
+            self.loading = False
+            self.track_controls.insertWidget(k, row["frame"], 1)
+            self.extra_rows.append(row)
+        while len(self.timeline.extra_waves) < len(p.tracks):
+            self.timeline.extra_waves.append(np.array([]))
+        del self.timeline.extra_waves[len(p.tracks):]
+        self.track_frames[0].menu_button.setVisible(rec)
+        if rec:
+            self.track_names[0].setText(self.track_label(0))
+        rows = 2 + len(p.tracks)
+        minimum = Timeline.TOP + Timeline.BOTTOM + rows * 62 + (rows - 1) * Timeline.GAP
+        for view in (self.timeline, self.edit_timeline):
+            view.setMinimumHeight(max(170, minimum))
+        self.track_tabs.blockSignals(True)
+        while self.track_tabs.count():
+            self.track_tabs.removeTab(0)
+        for k in range(p.track_count):
+            self.track_tabs.addTab(f"{k + 1} {p.track(k).name}")
+            self.track_tabs.setTabTextColor(k, QtGui.QColor(theme.c(take_color(0, k))))
+        self.track_tabs.setVisible(rec and p.track_count > 1)
+        self.track_tabs.blockSignals(False)
+        self.select_track(min(self.selected_track, p.track_count - 1))
+
+    def select_track(self, index):
+        if self.recording_active:
+            return
+        p = self.project
+        index = max(0, min(index, p.track_count - 1)) if p.is_record else 0
+        self.selected_track = index
+        self.timeline.selected_track = index
+        self.edit_timeline.selected_track = index
+        self.track_tabs.blockSignals(True)
+        if index < self.track_tabs.count():
+            self.track_tabs.setCurrentIndex(index)
+        self.track_tabs.blockSignals(False)
+        frames = [self.track_frames[0]] + [r["frame"] for r in self.extra_rows]
+        multi = p.is_record and p.track_count > 1
+        for k, frame in enumerate(frames):
+            color = take_color(0, k)
+            theme.apply(frame, f"QFrame#card {{ border: 1px solid {color}; }}" if multi and k == index else "")
+        if p.is_record:
+            self.fx_title.setText(f"{self.track_label(index)} 效果")
+            theme.apply(self.fx_title, f"color: {take_color(0, index)}; font-weight: 600;")
+        self.preset_backup = None
+        self.preset_undo.setEnabled(False)
+        self.load_controls()
+        self.refresh_record_panel()
+        self.timeline.update()
+        self.edit_timeline.update()
+        if hasattr(self, "play_button"):
+            self.update_record_buttons()
+
+    def on_track_tab(self, index):
+        if index >= 0:
+            self.select_track(index)
+
+    def current_track(self):
+        return self.project.track(self.selected_track if self.project.is_record else 0)
+
+    def refresh_record_panel(self):
+        if not self.project.is_record or self.recording_active:
+            return
+        panel = self.record_panel
+        track = self.current_track()
+        multi = self.project.track_count > 1
+        panel.set_target(self.selected_track, track.name, take_color(0, self.selected_track),
+                         self.monitor_names(self.selected_track) if multi else None)
+        if track.recording:
+            panel.set_done(track.duration, track.recording, len(track.punches))
+        else:
+            panel.set_state("ready")
+
+    def monitor_names(self, target):
+        names = ["伴奏"] if self.project.backing and not self.project.backing_muted else []
+        for k in range(self.project.track_count):
+            track = self.project.track(k)
+            if k != target and track.recording and not track.muted:
+                names.append(f"{k + 1} {track.name}")
+        return names
+
+    def add_track(self):
+        p = self.project
+        if self.busy or self.recording_active or not p.is_record or not p.recording or p.track_count >= MAX_TRACKS:
+            return
+        used = {p.track(k).name for k in range(p.track_count)}
+        suggestion = next((n for n in TRACK_NAMES if n not in used), "新軌")
+        names = [suggestion] + [n for n in TRACK_NAMES if n != suggestion]
+        name, ok = W.QInputDialog.getItem(self, "新增錄音軌", "新軌名稱（可直接輸入）：", names, 0, True)
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        effects = Effects()
+        effects.limiter_enabled = p.effects.limiter_enabled
+        p.tracks.append(Track(name=name[:20], effects=effects))
+        self.selected_track = p.track_count - 1
+        self.sync_tracks_ui()
+        self.mark_dirty()
+        self.refresh()
+        self.statusBar().showMessage(f"已新增第 {p.track_count} 軌「{name}」；錄音時耳機會聽到伴奏與其他沒有靜音的軌")
+
+    def show_track_menu(self, index, anchor):
+        if self.busy or self.recording_active or not self.project.is_record:
+            return
+        self.select_track(index)
+        menu = W.QMenu(self)
+        menu.addAction("重新命名…", lambda: self.rename_track(index))
+        if index > 0:
+            clear = menu.addAction("清除錄音", lambda: self.clear_track(index))
+            clear.setEnabled(bool(self.project.track(index).recording))
+            menu.addAction("刪除此軌", lambda: self.delete_track(index))
+        menu.exec(anchor.mapToGlobal(QtCore.QPoint(0, anchor.height()))) if QT6 else \
+            menu.exec_(anchor.mapToGlobal(QtCore.QPoint(0, anchor.height())))
+
+    def rename_track(self, index):
+        track = self.project.track(index)
+        name, ok = W.QInputDialog.getText(self, "重新命名", "軌道名稱：", text=track.name)
+        name = (name or "").strip()
+        if ok and name:
+            track.name = name[:20]
+            self.sync_tracks_ui()
+            self.mark_dirty()
+
+    def confirm(self, title, text):
+        answer = W.QMessageBox.question(self, title, text, W.QMessageBox.Yes | W.QMessageBox.No, W.QMessageBox.No)
+        return answer == W.QMessageBox.Yes
+
+    def clear_track(self, index):
+        track = self.project.track(index)
+        if not track.recording or not self.confirm(
+                "清除錄音", f"清除「{track.name}」的錄音？\n錄音檔會保留在錄音資料夾，不會刪除檔案。"):
+            return
+        track.recording, track.duration = "", 0.0
+        track.punches, track.punch_undo = [], []
+        self.timeline.extra_waves[index - 1] = np.array([])
+        self.sync_tracks_ui()
+        self.mark_dirty(audio=True)
+        self.refresh()
+
+    def delete_track(self, index):
+        track = self.project.track(index)
+        if track.recording and not self.confirm(
+                "刪除此軌", f"刪除「{track.name}」這一軌？\n錄音檔會保留在錄音資料夾，不會刪除檔案。"):
+            return
+        del self.project.tracks[index - 1]
+        del self.timeline.extra_waves[index - 1]
+        self.selected_track = 0
+        self.sync_tracks_ui()
+        self.mark_dirty(audio=True)
+        self.refresh()
+
+    def open_pan_dialog(self):
+        p = self.project
+        if self.busy or self.recording_active or not p.is_record:
+            return
+        rows = [(f"{k + 1} {p.track(k).name}", take_color(0, k), p.track(k).pan) for k in range(p.track_count)]
+        if p.backing:
+            rows.append(("伴奏", "#e9b853", p.backing_pan))
+        dialog = PanDialog(rows, pan_text, self)
+        accepted = dialog.exec() if QT6 else dialog.exec_()
+        if not accepted:
+            return
+        values = dialog.values()
+        for k in range(p.track_count):
+            p.track(k).pan = values[k]
+        if p.backing:
+            p.backing_pan = values[-1]
+        self.mark_dirty(audio=True)
+        self.statusBar().showMessage("聲道位置已更新")
+
     def load_controls(self):
         self.loading = True
-        fx = self.project.effects
+        fx = self.current_track().effects
         self.eq_toggle.setChecked(fx.eq_enabled)
         self.highpass.setValue(fx.highpass)
         for band, fields in zip(fx.bands, self.bands):
@@ -694,13 +939,16 @@ class MainWindow(W.QMainWindow):
                 widget.setChecked(v)
             else:
                 widget.setValue(v*100 if key == "mix" else v)
-        self.limiter.setChecked(fx.limiter_enabled)
+        self.limiter.setChecked(self.project.effects.limiter_enabled)
         self.offset.setValue(self.project.offset*1000)
         for (field, mute), value, muted in zip(self.volume_fields,
                                              (self.project.video_db, self.project.backing_db),
                                              (self.project.video_muted, self.project.backing_muted)):
             field.setValue(value)
             mute.setChecked(muted)
+        for row, track in zip(self.extra_rows, self.project.tracks):
+            row["field"].setValue(track.db)
+            row["mute"].setChecked(track.muted)
         self.preset.setCurrentIndex(0)
         self.loading = False
         self.eq_graph.effects = fx
@@ -709,7 +957,7 @@ class MainWindow(W.QMainWindow):
     def change_effects(self, *args):
         if self.loading:
             return
-        fx = self.project.effects
+        fx = self.current_track().effects
         fx.eq_enabled = self.eq_toggle.isChecked()
         fx.highpass = self.highpass.value()
         for band, fields in zip(fx.bands, self.bands):
@@ -717,7 +965,8 @@ class MainWindow(W.QMainWindow):
         for key, widget in self.fx_fields.items():
             setattr(fx, key, widget.isChecked() if key.endswith("enabled") else
                     widget.value()/100 if key == "mix" else widget.value())
-        fx.limiter_enabled = self.limiter.isChecked()
+        # The limiter is on the master output: stored with track 1's effects.
+        self.project.effects.limiter_enabled = self.limiter.isChecked()
         self.preset_chain = False
         self.loading = True
         self.preset.setCurrentIndex(0)
@@ -734,13 +983,16 @@ class MainWindow(W.QMainWindow):
         self.project.offset = offset
         self.project.video_db, self.project.backing_db = [f.value() for f, _ in self.volume_fields]
         self.project.video_muted, self.project.backing_muted = [m.isChecked() for _, m in self.volume_fields]
+        for row, track in zip(self.extra_rows, self.project.tracks):
+            track.db, track.muted = row["field"].value(), row["mute"].isChecked()
         self.timeline.update()
         self.mark_dirty(audio=True)
 
     def apply_preset(self, index):
         if self.loading or index == 0:
             return
-        backup = copy.deepcopy(self.project.effects)
+        track = self.current_track()
+        backup = copy.deepcopy(track.effects)
         fx = Effects()
         # Tone presets switch their effects on; only new projects start with
         # EQ/Comp/Revb bypassed. Loading a project restores its own flags.
@@ -759,7 +1011,7 @@ class MainWindow(W.QMainWindow):
         elif index == 4:
             fx.mix, fx.decay = .25, 2.3
             fx.bands[-1].gain = -2
-        self.project.effects = fx
+        track.effects = fx
         if not self.preset_chain or self.preset_backup is None or self.preset_backup[0] is not self.project:
             # Keep the settings from before the first of consecutive preset
             # clicks, so trying several presets still returns to the user's own
@@ -776,7 +1028,9 @@ class MainWindow(W.QMainWindow):
     def undo_preset(self):
         if self.busy or not self.preset_backup or self.preset_backup[0] is not self.project:
             return
-        self.project.effects = copy.deepcopy(self.preset_backup[1])
+        restored = copy.deepcopy(self.preset_backup[1])
+        restored.limiter_enabled = self.project.effects.limiter_enabled
+        self.current_track().effects = restored
         self.preset_backup = None
         self.preset_undo.setEnabled(False)
         self.load_controls()
@@ -875,6 +1129,8 @@ class MainWindow(W.QMainWindow):
         def done(result):
             info, wave, audible = result
             self.project = Project(mode="record", backing=path, duration=0.0, clips=[])
+            self.selected_track = 0
+            self.timeline.extra_waves = []
             self.backing_range = audible
             self.alignment_reliable = None
             self.preset_backup = None
@@ -907,8 +1163,11 @@ class MainWindow(W.QMainWindow):
         self.align_button.setVisible(not rec)
         self.align_label.setVisible(not rec)
         self.record_offset_label.setVisible(rec)
-        self.track_names[0].setText("第一軌 · 錄音" if rec else "第一軌 · 影片原音")
-        self.fx_title.setText("第一軌 · 錄音 效果" if rec else "第一軌 · 影片原音 效果")
+        self.track_names[0].setText(self.track_label(0) if rec else "第一軌 · 影片原音")
+        self.fx_title.setText(f"{self.track_label(0)} 效果" if rec else "第一軌 · 影片原音 效果")
+        theme.apply(self.fx_title, "color: #27c9c3; font-weight: 600;")
+        self.pan_button.setVisible(rec)
+        self.add_track_button.setVisible(rec)
         self.export_button.setText("匯出音訊（WAV / MP3）" if rec else "匯出影片 / 音訊")
         self.timeline.empty_text = ("匯入伴奏後開始錄音，波形會顯示在這裡" if rec else
                                     "匯入影片與伴奏後，波形會顯示在這裡")
@@ -918,6 +1177,8 @@ class MainWindow(W.QMainWindow):
             self.ensure_session()
         elif self.session is not None and not self.recording_active:
             self.session.close_input()
+        if not self.recording_active:
+            self.sync_tracks_ui()
         self.timeline.update()
 
     def set_recording_ui(self, active):
@@ -932,10 +1193,11 @@ class MainWindow(W.QMainWindow):
         if not self.record_panel.unavailable.text():
             self.record_panel.record_button.setEnabled(ready)
             self.record_panel.rerecord_button.setEnabled(ready)
-            self.record_panel.punch_button.setEnabled(ready and bool(self.project.recording)
+            track = self.current_track()
+            self.record_panel.punch_button.setEnabled(ready and bool(track.recording)
                                                       and not self.recording_active)
             self.record_panel.undo_punch_button.setEnabled(
-                not self.busy and not self.recording_active and bool(self.project.punch_undo))
+                not self.busy and not self.recording_active and bool(track.punch_undo))
             self.record_panel.calibrate_button.setEnabled(
                 not self.busy and not self.recording_active and self.session is not None and self.session.input_open)
 
@@ -1083,8 +1345,8 @@ class MainWindow(W.QMainWindow):
 
     def on_record_volume(self, value_db):
         self.settings.setValue("record/volume", value_db)
-        if self.punch is not None:
-            return  # the punch-in mix has the backing level baked in
+        if self.punch is not None or getattr(self, "baked_monitor", False) and self.recording_active:
+            return  # the backing level is baked into this take's headphone mix
         if self.session is not None and self.session.sink is not None:
             self.session.sink.setVolume(min(1.0, 10 ** (value_db / 20)))
 
@@ -1095,6 +1357,20 @@ class MainWindow(W.QMainWindow):
         base = paths.writableLocation(location) or str(Path.home())
         return Path(base) / "Sax Cover Studio" / "錄音"
 
+    def monitor_tracks(self, target):
+        """[(path, backing_offset, gain, pan)] of the recorded, unmuted tracks other than `target`."""
+        out = []
+        for k in range(self.project.track_count):
+            track = self.project.track(k)
+            if k != target and track.recording and not track.muted:
+                out.append((track.recording, track.backing_offset, 10 ** (track.db / 20), track.pan))
+        return out
+
+    @staticmethod
+    def decode_monitor(tracks, cancel):
+        return [(decode_mono(path, rate=48000, cancel=cancel), offset, gain, pan)
+                for path, offset, gain, pan in tracks]
+
     def start_recording(self):
         if self.busy or self.recording_active or not self.project.is_record:
             return
@@ -1104,9 +1380,15 @@ class MainWindow(W.QMainWindow):
         if self.session is None or not self.session.input_open:
             self.show_error("麥克風尚未開啟，請確認輸入裝置")
             return
-        if self.project.recording:
+        target = self.selected_track
+        track = self.project.track(target)
+        if target > 0 and not self.project.recording:
+            self.show_error("請先錄好第一軌")
+            return
+        if track.recording:
             answer = W.QMessageBox.question(
-                self, "重錄", "重錄會取代目前的整段錄音" + ("（中途重錄的紀錄也會清除）" if self.project.punches else "") +
+                self, "重錄", f"重錄會取代「{track.name}」目前的整段錄音" +
+                ("（中途重錄的紀錄也會清除）" if track.punches else "") +
                 "。\n伴奏、EQ／壓縮／混響、音量與延遲校正都會保留。\n要開始重錄嗎？",
                 W.QMessageBox.Yes | W.QMessageBox.No, W.QMessageBox.Yes)
             if answer != W.QMessageBox.Yes:
@@ -1120,29 +1402,50 @@ class MainWindow(W.QMainWindow):
                 return
         self.pause()
         backing = self.project.backing
+        others = self.monitor_tracks(target)
+        gain = min(1.0, 10 ** (self.record_panel.volume_db / 20))
         def task(cancel, progress):
-            progress("正在準備伴奏…")
-            return decode_stereo(backing, cancel=cancel)
-        self.launch(task, self.begin_take)
+            progress("正在準備伴奏…" if not others else "正在準備伴奏與其他軌…")
+            samples = decode_stereo(backing, cancel=cancel)
+            if not others:
+                return samples, False
+            # Other tracks are mixed in; the backing level is baked into the mix.
+            return recorder.monitor_mix(samples, self.decode_monitor(others, cancel), backing_gain=gain), True
+        def ready(result):
+            samples, baked = result
+            self.begin_take(samples, target, baked)
+        self.launch(task, ready)
 
-    def begin_take(self, samples):
+    def begin_take(self, samples, target=0, baked=False):
         stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd-HHmmss")
-        path = self.recordings_dir() / f"錄音-{stamp}.wav"
+        suffix = "" if target == 0 else f"-第{target + 1}軌"
+        path = self.recordings_dir() / f"錄音-{stamp}{suffix}.wav"
         countdown = self.record_panel.countdown
-        volume = min(1.0, 10 ** (self.record_panel.volume_db / 20))
+        volume = 1.0 if baked else min(1.0, 10 ** (self.record_panel.volume_db / 20))
         self.live_peaks = []
+        self.take_track = target
+        self.baked_monitor = baked
         self.record_panel.reset_clip()
         self.record_panel.clip_label.setText("錄音中…")
         if not self.session.start_take(str(path), self.selected_output(), samples, volume, countdown):
             return
         self.recording_active = True
         self.record_panel.set_state("countdown" if countdown else "recording")
-        self.timeline.override_duration = countdown + len(samples) / 48000 + 2.5
-        self.timeline.video_wave = np.array([])
-        self.timeline.video_duration = 1e-6
-        self.timeline.position = 0
+        if target == 0:
+            self.timeline.override_duration = countdown + len(samples) / 48000 + 2.5
+            self.timeline.video_wave = np.array([])
+            self.timeline.video_duration = 1e-6
+            self.timeline.position = 0
+        else:
+            # Track 1's timeline stays; the new take grows on its own lane from
+            # where the backing starts.
+            p = self.project
+            self.fresh = {"track": target, "length": len(samples) / 48000, "times": [], "peaks": [],
+                          "heard": None}
+            self.timeline.override_duration = max(p.duration, p.offset + len(samples) / 48000 + 2.5)
+            self.timeline.punch_live = (target, p.offset, np.array([]), np.array([]), take_color(0, target))
         self.refresh()
-        self.statusBar().showMessage(f"錄音中 · 檔案：{path}")
+        self.statusBar().showMessage(f"錄音中 · {self.track_label(target)} · 檔案：{path}")
 
     def stop_recording(self):
         if self.session is not None and self.recording_active:
@@ -1150,29 +1453,44 @@ class MainWindow(W.QMainWindow):
 
     def on_record_level(self, peak):
         self.record_panel.set_level(peak)
-        if self.punch is not None:
-            if self.punch["heard"] >= self.punch["start"]:
-                self.punch["times"].append(self.punch["heard"])
-                self.punch["peaks"].append(peak)
+        live = self.punch if self.punch is not None else self.fresh
+        if live is not None:
+            heard = live["heard"]
+            if heard is not None and heard >= live.get("start_main", -1e9):
+                live["times"].append(heard)
+                live["peaks"].append(peak)
             return
         if self.recording_active:
             self.live_peaks.append(peak)
 
+    def update_live_lane(self, live):
+        now = QtCore.QDateTime.currentMSecsSinceEpoch()
+        if now - self.live_update > 120 and live["peaks"] and self.timeline.punch_live is not None:
+            self.live_update = now
+            peaks = np.array(live["peaks"], dtype=float)
+            row, start, _t, _p, color = self.timeline.punch_live
+            self.timeline.punch_live = (row, start, np.array(live["times"]),
+                                        np.clip(peaks / max(.05, float(peaks.max())), 0, 1), color)
+
     def on_record_progress(self, seconds, left):
         if self.punch is not None:
             # `seconds` counts from the take start; playback starts ~immediately.
-            heard = self.punch["begin"] + seconds
-            self.punch["heard"] = heard
-            self.record_panel.set_punch_progress(self.punch["start"] - heard, heard, left)
-            now = QtCore.QDateTime.currentMSecsSinceEpoch()
-            if now - self.live_update > 120 and self.punch["peaks"]:
-                self.live_update = now
-                peaks = np.array(self.punch["peaks"], dtype=float)
-                start, _t, _p, color = self.timeline.punch_live
-                self.timeline.punch_live = (start, np.array(self.punch["times"]),
-                                            np.clip(peaks / max(.05, float(peaks.max())), 0, 1), color)
-            self.timeline.position = min(heard, self.timeline.total())
+            punch = self.punch
+            heard = punch["begin"] + seconds            # on the punched track's own timeline
+            punch["heard"] = heard + punch["shift"]     # on track 1's timeline (for drawing)
+            self.record_panel.set_punch_progress(punch["start"] - heard, punch["heard"], left)
+            self.update_live_lane(punch)
+            self.timeline.position = min(punch["heard"], self.timeline.total())
             self.timeline.update()
+            return
+        if self.fresh is not None:
+            self.record_panel.set_progress(seconds, left)
+            if left >= 0:
+                # Backing time heard so far, placed on track 1's timeline.
+                self.fresh["heard"] = self.project.offset + max(0.0, self.fresh["length"] - left)
+                self.update_live_lane(self.fresh)
+                self.timeline.position = min(self.fresh["heard"], self.timeline.total())
+                self.timeline.update()
             return
         self.record_panel.set_progress(seconds, left)
         now = QtCore.QDateTime.currentMSecsSinceEpoch()
@@ -1189,9 +1507,17 @@ class MainWindow(W.QMainWindow):
         if seconds == 0:
             self.record_panel.set_state("recording")
 
+    def end_live_display(self):
+        self.timeline.punch_live = None
+        self.timeline.override_duration = None
+        self.record_panel.restore_hint()
+
     def finish_recording(self, result):
         if self.punch is not None:
             self.finish_punch(result)
+            return
+        if self.fresh is not None:
+            self.finish_extra_take(result)
             return
         self.recording_active = False
         self.record_panel.restore_hint()
@@ -1222,70 +1548,110 @@ class MainWindow(W.QMainWindow):
             self.record_offset_label.setText(f"位移由錄音時間自動計算（已扣除 {latency:.1f} ms 延遲），可再手動微調")
             if result.peak >= .985:
                 self.statusBar().showMessage("錄音完成，但有破音；建議調低錄音介面的輸入增益後重錄")
+            elif p.tracks:
+                self.statusBar().showMessage("第一軌錄音完成；其他軌依伴奏對齊")
             else:
                 self.statusBar().showMessage("錄音完成並放入第一軌；按播放核對，或按「依伴奏自動裁剪」")
             self.refresh()
         self.record_panel.set_state("done" if self.project.recording else "ready")
         self.launch(task, done)
 
+    def finish_extra_take(self, result):
+        fresh, self.fresh = self.fresh, None
+        self.recording_active = False
+        self.end_live_display()
+        target = fresh["track"]
+        track = self.project.track(target)
+        latency = self.current_latency() or 0.0
+        offset = recorder.recording_offset(result.start_offset, latency)
+        path = result.path
+        def task(cancel, progress):
+            progress("正在分析錄音…")
+            return probe(path, cancel), waveform(path, cancel)
+        def done(analysis):
+            info, wave = analysis
+            track.recording, track.duration, track.backing_offset = path, info["duration"], offset
+            track.punches, track.punch_undo = [], []
+            self.timeline.extra_waves[target - 1] = wave
+            self.sync_tracks_ui()
+            self.mark_dirty(audio=True)
+            message = f"{self.track_label(target)} 錄音完成"
+            self.statusBar().showMessage(message + ("，但有破音；建議調低輸入增益後重錄" if result.peak >= .985
+                                                    else "；按播放聽合奏"))
+            self.refresh()
+        self.refresh_record_panel()
+        self.launch(task, done)
+
     # ------------------------------------------------------------ punch-in
     def start_punch(self):
-        """Re-record from the playhead to the end (the old take stays until done)."""
+        """Re-record the selected track from the playhead to the end."""
         p = self.project
-        if self.busy or self.recording_active or not p.is_record or not p.recording:
+        target = self.selected_track if p.is_record else 0
+        track = p.track(target)
+        if self.busy or self.recording_active or not p.is_record or not track.recording:
             return
         if self.session is None or not self.session.input_open:
             self.show_error("麥克風尚未開啟，請確認輸入裝置")
             return
-        start = max(0.0, min(self.position, p.duration - .2))
+        shift = p.track_shift(target)
+        start = max(0.0, min(self.position - shift, track.duration - .2))
         self.pause()
-        backing, recording, offset = p.backing, p.recording, p.offset
+        backing, recording, offset = p.backing, track.recording, track.backing_offset
+        others = self.monitor_tracks(target)
         gain = min(1.0, 10 ** (self.record_panel.volume_db / 20))
         def task(cancel, progress):
             progress("正在準備重錄（伴奏＋目前錄音）…")
             back = decode_stereo(backing, cancel=cancel)
             rec = decode_mono(recording, rate=48000, cancel=cancel)
-            return recorder.punch_playback(back, rec, offset, start, backing_gain=gain)
+            return recorder.punch_playback(back, rec, offset, start, backing_gain=gain,
+                                           others=self.decode_monitor(others, cancel))
         def ready(result):
             mix, begin = result
-            self.begin_punch(mix, begin, start)
+            self.begin_punch(mix, begin, start, target)
         self.launch(task, ready)
 
-    def begin_punch(self, mix, begin, start):
+    def begin_punch(self, mix, begin, start, target=0):
+        p = self.project
+        track = p.track(target)
+        shift = p.track_shift(target)
         stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd-HHmmss")
-        path = self.recordings_dir() / f"錄音-{stamp}-重錄{len(self.project.punches) + 1}.wav"
+        suffix = "" if target == 0 else f"-第{target + 1}軌"
+        path = self.recordings_dir() / f"錄音-{stamp}{suffix}-重錄{len(track.punches) + 1}.wav"
         self.record_panel.reset_clip()
         self.record_panel.clip_label.setText("重錄中…")
-        self.punch = {"start": start, "begin": begin, "heard": begin, "times": [], "peaks": []}
+        self.take_track = target
+        self.punch = {"track": target, "start": start, "begin": begin, "shift": shift,
+                      "start_main": start + shift, "heard": begin + shift, "times": [], "peaks": []}
         if not self.session.start_take(str(path), self.selected_output(), mix, 1.0, 0):
             self.punch = None
             return
         self.recording_active = True
         # Timeline spans the whole backing so the playhead and the new take can
         # run past the end of the old recording.
-        self.timeline.override_duration = max(self.project.duration, begin + len(mix) / 48000 + 2.5)
-        self.timeline.punch_live = (start, np.array([]), np.array([]),
-                                    take_color(len(self.project.punches) + 1))
+        self.timeline.override_duration = max(p.duration, begin + shift + len(mix) / 48000 + 2.5)
+        self.timeline.punch_live = (target, start + shift, np.array([]), np.array([]),
+                                    take_color(len(track.punches) + 1, target))
         self.record_panel.set_state("punch")
-        self.record_panel.set_punch_progress(start - begin, begin, -1)
+        self.record_panel.set_punch_progress(start - begin, begin + shift, -1)
         self.refresh()
-        self.statusBar().showMessage(f"重錄中 · 起點 {clock(start)} · 檔案：{path}")
+        self.statusBar().showMessage(f"重錄中 · {self.track_label(target)} · 起點 {clock(start + shift)} · 檔案：{path}")
 
     def end_punch_display(self):
-        self.timeline.punch_live = None
-        self.timeline.override_duration = None
-        self.record_panel.restore_hint()
+        self.end_live_display()
 
     def finish_punch(self, result):
         punch, self.punch = self.punch, None
         self.recording_active = False
-        self.end_punch_display()
+        self.end_live_display()
         p = self.project
+        target = punch["track"]
+        track = p.track(target)
         latency = self.current_latency() or 0.0
-        old_path = p.recording
+        old_path = track.recording
         stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd-HHmmss")
-        number = len(p.punches) + 1
-        out = self.recordings_dir() / f"錄音-{stamp}-合成{number}.wav"
+        number = len(track.punches) + 1
+        suffix = "" if target == 0 else f"-第{target + 1}軌"
+        out = self.recordings_dir() / f"錄音-{stamp}{suffix}-合成{number}.wav"
         def task(cancel, progress):
             progress("正在接合重錄…")
             old = decode_mono(old_path, rate=48000, cancel=cancel)
@@ -1298,51 +1664,62 @@ class MainWindow(W.QMainWindow):
             return len(merged) / 48000, waveform(out, cancel)
         def done(analysis):
             seconds, wave = analysis
-            p.punch_undo.append(PunchUndo(old_path, p.duration, copy.deepcopy(p.clips)))
-            p.punches.append(Punch(punch["start"], number))
-            p.recording = str(out)
-            p.duration = seconds
-            # Clips before the punch stay; the one holding it now runs to the new end.
-            kept = [Clip(c.start, min(c.end, seconds)) for c in p.clips if c.start < punch["start"]]
-            if kept:
-                kept[-1].end = seconds
-            p.clips = kept or [Clip(0, seconds)]
-            self.undo_stack.clear()
-            self.timeline.video_wave = wave
-            self.timeline.video_duration = None
-            self.load_media(None)
-            self.apply_mode()
+            track.punch_undo.append(PunchUndo(old_path, track.duration,
+                                              copy.deepcopy(p.clips) if target == 0 else []))
+            track.punches.append(Punch(punch["start"], number))
+            track.recording = str(out)
+            track.duration = seconds
+            if target == 0:
+                # Clips before the punch stay; the one holding it now runs to the new end.
+                kept = [Clip(c.start, min(c.end, seconds)) for c in p.clips if c.start < punch["start"]]
+                if kept:
+                    kept[-1].end = seconds
+                p.clips = kept or [Clip(0, seconds)]
+                self.undo_stack.clear()
+                self.timeline.video_wave = wave
+                self.timeline.video_duration = None
+                self.load_media(None)
+                self.apply_mode()
+            else:
+                self.timeline.extra_waves[target - 1] = wave
+                self.sync_tracks_ui()
             self.mark_dirty(audio=True)
-            self.seek(max(0.0, punch["start"] - recorder.PREROLL))
-            self.record_panel.set_done(p.duration, p.recording, len(p.punches))
-            self.statusBar().showMessage(f"已從 {clock(punch['start'])} 重錄（第 {number} 次）；"
-                                         "不滿意可按「復原上一次重錄」")
+            self.seek(max(0.0, punch["start_main"] - recorder.PREROLL))
+            self.refresh_record_panel()
+            self.statusBar().showMessage(f"{self.track_label(target)} 已從 {clock(punch['start_main'])} 重錄"
+                                         f"（第 {number} 次）；不滿意可按「復原上一次重錄」")
             self.refresh()
-        self.record_panel.set_state("done")
+        self.refresh_record_panel()
         self.launch(task, done)
 
     def undo_punch(self):
         p = self.project
-        if self.busy or self.recording_active or not p.punch_undo:
+        target = self.selected_track if p.is_record else 0
+        track = p.track(target)
+        if self.busy or self.recording_active or not track.punch_undo:
             return
-        previous = p.punch_undo[-1]
+        previous = track.punch_undo[-1]
         def task(cancel, progress):
             progress("正在復原…")
             return waveform(previous.recording, cancel)
         def done(wave):
-            p.punch_undo.pop()
-            removed = p.punches.pop()
-            p.recording, p.duration = previous.recording, previous.duration
-            p.clips = previous.clips or [Clip(0, previous.duration)]
-            self.undo_stack.clear()
-            self.timeline.video_wave = wave
-            self.timeline.video_duration = None
-            self.load_media(None)
-            self.apply_mode()
+            track.punch_undo.pop()
+            removed = track.punches.pop()
+            track.recording, track.duration = previous.recording, previous.duration
+            if target == 0:
+                p.clips = previous.clips or [Clip(0, previous.duration)]
+                self.undo_stack.clear()
+                self.timeline.video_wave = wave
+                self.timeline.video_duration = None
+                self.load_media(None)
+                self.apply_mode()
+            else:
+                self.timeline.extra_waves[target - 1] = wave
+                self.sync_tracks_ui()
             self.mark_dirty(audio=True)
-            self.seek(max(0.0, removed.start - recorder.PREROLL))
-            self.record_panel.set_done(p.duration, p.recording, len(p.punches))
-            self.statusBar().showMessage(f"已復原第 {removed.number} 次重錄")
+            self.seek(max(0.0, removed.start + p.track_shift(target) - recorder.PREROLL))
+            self.refresh_record_panel()
+            self.statusBar().showMessage(f"已復原{self.track_label(target)}的第 {removed.number} 次重錄")
             self.refresh()
         self.launch(task, done)
 
@@ -1352,13 +1729,20 @@ class MainWindow(W.QMainWindow):
             return
         if self.recording_active:
             self.recording_active = False
+            fresh_or_punch = self.punch is not None or self.fresh is not None
             self.punch = None
+            self.fresh = None
             self.timeline.punch_live = None
             self.record_panel.restore_hint()
-            self.record_panel.set_state("done" if self.project.recording else "ready")
-            self.timeline.override_duration = None if self.project.recording else (self.timeline.back_duration or None)
-            self.timeline.video_duration = None
-            self.timeline.video_wave = (waveform_or_empty(self.project.recording))
+            if fresh_or_punch:
+                self.timeline.override_duration = None
+            else:
+                self.timeline.override_duration = None if self.project.recording else (self.timeline.back_duration or None)
+                self.timeline.video_duration = None
+                self.timeline.video_wave = (waveform_or_empty(self.project.recording))
+            self.refresh_record_panel()
+            if not self.project.recording:
+                self.record_panel.set_state("ready")
             self.refresh()
         self.show_error(text)
 
@@ -1408,6 +1792,8 @@ class MainWindow(W.QMainWindow):
         def done(result):
             info, wave, still = result
             self.project = Project(video=path, duration=info["duration"], clips=[Clip(0, info["duration"])])
+            self.selected_track = 0
+            self.timeline.extra_waves = []
             self.backing_range = None
             self.alignment_reliable = None
             self.preset_backup = None
@@ -1803,6 +2189,15 @@ class MainWindow(W.QMainWindow):
             view.project = self.project
             view.update()
         self.edit_button.setEnabled(has and idle)
+        full = self.project.track_count >= MAX_TRACKS
+        self.add_track_button.setEnabled(rec and has and idle and not full)
+        self.add_track_button.setToolTip(f"最多 {MAX_TRACKS} 軌" if full else
+                                         "先錄好第一軌，再新增其他聲部（錄音時耳機會聽到伴奏與其他軌）"
+                                         if not has else "新增一條錄音軌（最多 3 軌）")
+        self.pan_button.setEnabled(rec and idle)
+        self.track_tabs.setEnabled(idle)
+        for frame in [self.track_frames[0]] + [r["frame"] for r in self.extra_rows]:
+            frame.menu_button.setEnabled(idle)
         self.edit_dialog.autotrim_button.setEnabled(self.autotrim_button.isEnabled())
         self.duration_label.setText(f"輸出 {clock(self.project.output_duration)}")
         whole = [Clip(0, self.project.duration)]
@@ -1870,15 +2265,22 @@ class MainWindow(W.QMainWindow):
             if not p.is_record:
                 still = Path(self.temp.name)/"project-still.jpg"
                 thumbnail(p.video, still, cancel)
+            extra = []
+            for track in p.tracks:
+                if track.recording and not Path(track.recording).is_file():
+                    raise ValueError(f"找不到「{track.name}」的錄音：{track.recording}\n"
+                                     "請將錄音檔移回原位置，或在 .saxproj 中更新路徑。")
+                extra.append(waveform(track.recording, cancel) if track.recording else np.array([]))
             bwave, bd, audible = np.array([]), 0, None
             if p.backing:
                 bd = probe(p.backing, cancel)["duration"]
                 bwave = waveform(p.backing, cancel)
                 audible = backing_range(p.backing, cancel)
-            return p, vwave, bwave, bd, (str(still) if still else None), audible
+            return p, vwave, bwave, bd, (str(still) if still else None), audible, extra
         def done(result):
             (self.project, self.timeline.video_wave, self.timeline.back_wave,
-             self.timeline.back_duration, still, self.backing_range) = result
+             self.timeline.back_duration, still, self.backing_range, self.timeline.extra_waves) = result
+            self.selected_track = 0
             self.alignment_reliable = None
             self.preset_backup = None
             self.preset_undo.setEnabled(False)

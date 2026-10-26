@@ -419,6 +419,23 @@ class PunchInTest(unittest.TestCase):
         self.assertAlmostEqual(float(out[6 * r]), -6.0 * r / 1e6, places=5)
         self.assertAlmostEqual(len(out) / r, begin + 6 - so - latency / 1000, places=3)
 
+    def test_monitor_mix_places_other_tracks_on_backing_time(self):
+        r = self.RATE
+        backing = np.zeros((4 * r, 2), np.float32)
+        other = np.zeros(5 * r, np.float32)
+        other[2 * r] = 1.0                 # 2.0 s on its own timeline
+        mix = recorder.monitor_mix(backing, [(other, .5, .5, -1.0)])
+        # Backing starts at 0.5 s on that track, so the click is at backing 1.5 s.
+        self.assertAlmostEqual(float(mix[int(1.5 * r), 0]), .5, places=5)
+        self.assertEqual(float(mix[int(1.5 * r), 1]), 0.0)   # panned left
+
+    def test_punch_playback_keeps_other_tracks_after_the_punch(self):
+        r = self.RATE
+        other = np.full(10 * r, .1, np.float32)
+        mix, begin = recorder.punch_playback(np.zeros((8 * r, 2), np.float32), np.zeros(10 * r, np.float32),
+                                             1.0, 5.0, others=[(other, 1.0, 1.0, 0.0)])
+        self.assertAlmostEqual(float(mix[4 * r, 0]), .1, places=5)
+
     def test_splice_rejects_take_stopped_before_punch(self):
         with self.assertRaises(ValueError):
             recorder.splice_punch(np.zeros(480000, np.float32), np.zeros(48000, np.float32),

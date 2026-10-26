@@ -75,6 +75,8 @@ def take_color(number, track=0):
 class Timeline(QtWidgets.QWidget):
     seek = Signal(float)
     select = Signal(int)
+    track_clicked = Signal(int)
+    TOP, BOTTOM, GAP = 27, 12, 6
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -87,8 +89,12 @@ class Timeline(QtWidgets.QWidget):
         self.video_duration = None
         self.override_duration = None
         self.empty_text = "匯入影片與伴奏後，波形會顯示在這裡"
-        # During a punch-in: (start, times, peaks, colour) of the new take, drawn
-        # over track 1 from `start`; the old take is shown only before it.
+        # Waveforms of the extra recording tracks (project.tracks order).
+        self.extra_waves = []
+        # Track being edited / recorded (0 = track 1); its lane is highlighted.
+        self.selected_track = 0
+        # A take in progress: (row, start, times, peaks, colour) on track 1's
+        # timeline. From `start` on that row only the new take is drawn.
         self.punch_live = None
         self.position = 0
         self.selected = -1
@@ -109,36 +115,67 @@ class Timeline(QtWidgets.QWidget):
             return 0
         return max(0, min(self.total(), (x-12)/max(1, self.width()-24)*self.total()))
 
+    # ---- rows
+    def row_count(self):
+        return 2 + (len(self.project.tracks) if self.project else 0)
+
+    def lane(self, row):
+        """(top, height) of a row; rows share the height left after the ruler."""
+        rows = self.row_count()
+        h = (self.height() - self.TOP - self.BOTTOM - (rows - 1) * self.GAP) / rows
+        return self.TOP + row * (h + self.GAP), h
+
+    def rows(self):
+        """Per row: track index (None = backing), wave, own duration, shift, colour, segments."""
+        p = self.project
+        growing = self.video_duration is not None or bool(self.override_duration)
+        main_segments = [] if growing or not p.is_record or not p.punches else p.take_segments()
+        out = [(0, self.video_wave, self.video_duration or p.duration, 0.0, take_color(0, 0), main_segments)]
+        for k, track in enumerate(p.tracks, start=1):
+            wave = self.extra_waves[k - 1] if k - 1 < len(self.extra_waves) else np.array([])
+            segments = [] if self.override_duration or not track.punches else track.take_segments()
+            out.append((k, wave, track.duration, p.track_shift(k), take_color(0, k), segments))
+        out.append((None, self.back_wave, self.back_duration, p.offset, "#e9b853", []))
+        return out
+
+    def take_segments(self):
+        """Coloured track-1 segments (kept for callers and tests)."""
+        return self.rows()[0][5] if self.project else []
+
     def mousePressEvent(self, event):
         if not self.project or not self.project.duration or self.override_duration:
             return
         t = self.x_time(event.pos().x())
+        if len(self.project.tracks) and event.type() == QtCore.QEvent.MouseButtonPress:
+            for row, entry in enumerate(self.rows()):
+                top, h = self.lane(row)
+                if entry[0] is not None and top <= event.pos().y() <= top + h:
+                    self.track_clicked.emit(entry[0])
+                    break
         self.selected = next((i for i, c in enumerate(self.project.clips) if c.start <= t <= c.end), -1)
         self.select.emit(self.selected)
         self.seek.emit(t)
         self.update()
 
-    def take_segments(self):
-        """Coloured track-1 segments; empty unless a finished recording has punch-ins."""
-        p = self.project
-        if not p or not p.is_record or not p.punches or self.video_duration or self.override_duration:
-            return []
-        return p.take_segments()
-
     def mouseMoveEvent(self, event):
         if event.buttons() & QtCore.Qt.LeftButton:
             self.mousePressEvent(event)
             return
-        segments = self.take_segments()
-        if not segments:
+        if not self.project:
             return
-        t = self.x_time(event.pos().x())
-        seg = next((s for s in segments if s[0] <= t < s[1]), None)
-        if seg is None:
-            return
-        text = "原始錄音" if seg[2] == 0 else f"第 {seg[2]} 次重錄 · {int(seg[0])//60:02}:{seg[0]%60:04.1f} 起"
-        pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
-        QtWidgets.QToolTip.showText(pos, text, self)
+        y = event.pos().y()
+        for row, (track, _w, _d, shift, _c, segments) in enumerate(self.rows()):
+            top, h = self.lane(row)
+            if top <= y <= top + h and segments:
+                t = self.x_time(event.pos().x()) - shift
+                seg = next((s for s in segments if s[0] <= t < s[1]), None)
+                if seg is None:
+                    return
+                start = seg[0] + shift
+                text = "原始錄音" if seg[2] == 0 else f"第 {seg[2]} 次重錄 · {int(start)//60:02}:{start%60:04.1f} 起"
+                pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos()
+                QtWidgets.QToolTip.showText(pos, text, self)
+                return
 
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
@@ -148,8 +185,7 @@ class Timeline(QtWidgets.QWidget):
             p.drawText(self.rect(), QtCore.Qt.AlignCenter, self.empty_text)
             return
         d = self.total()
-        top = 27
-        track_h = (self.height()-top-12)/2
+        top = self.TOP
         p.setPen(QtGui.QColor(theme.c("#7f92a8")))
         for t in np.linspace(0, d, 9):
             x = self.time_x(t)
@@ -158,37 +194,50 @@ class Timeline(QtWidgets.QWidget):
             p.setPen(QtGui.QColor(theme.c("#223344")))
             p.drawLine(QtCore.QPointF(x, top), QtCore.QPointF(x, self.height()-8))
             p.setPen(QtGui.QColor(theme.c("#7f92a8")))
-        segments = self.take_segments()
-        for row, (wave, duration, offset, color) in enumerate([
-            (self.video_wave, self.video_duration or self.project.duration, 0, "#27c9c3"),
-            (self.back_wave, self.back_duration, self.project.offset, "#e9b853")]):
-            mid = top+(row+.5)*track_h
-            p.setPen(QtGui.QPen(QtGui.QColor(theme.c(color)), 1))
-            if len(wave):
-                for pixel in range(12, self.width()-12):
-                    t = self.x_time(pixel)-offset
-                    if row == 0 and self.punch_live is not None and t >= self.punch_live[0]:
-                        start, times, peaks, live_color = self.punch_live
-                        if len(times) and t <= times[-1]:
-                            i = min(len(peaks) - 1, int(np.searchsorted(times, t)))
-                            height = float(peaks[i]) * track_h * .38
-                            p.setPen(QtGui.QPen(QtGui.QColor(theme.c(live_color)), 1))
-                            p.drawLine(QtCore.QPointF(pixel, mid - height), QtCore.QPointF(pixel, mid + height))
-                        continue
-                    if 0 <= t < duration:
-                        if row == 0 and self.punch_live is not None:
-                            p.setPen(QtGui.QPen(QtGui.QColor(theme.c(color)), 1))
-                        if row == 0 and segments:
-                            number = next((s[2] for s in segments if s[0] <= t < s[1]), segments[-1][2])
-                            p.setPen(QtGui.QPen(QtGui.QColor(theme.c(take_color(number))), 1))
-                        index = min(len(wave)-1, int(t/max(.001, duration)*len(wave)))
-                        height = float(wave[index])*track_h*.38
-                        p.drawLine(QtCore.QPointF(pixel, mid-height), QtCore.QPointF(pixel, mid+height))
-        # Seams between takes.
-        for start, _end, _number in segments[1:]:
-            x = self.time_x(start)
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 130), 1))
-            p.drawLine(QtCore.QPointF(x, top - 2), QtCore.QPointF(x, top + track_h))
+        rows = self.rows()
+        multi = len(rows) > 2
+        live = self.punch_live
+        for row, (track, wave, duration, shift, color, segments) in enumerate(rows):
+            lane_top, track_h = self.lane(row)
+            mid = lane_top + track_h / 2
+            if multi and track == self.selected_track:
+                tint = QtGui.QColor(theme.c(color))
+                tint.setAlpha(22)
+                p.fillRect(QtCore.QRectF(8, lane_top, self.width() - 16, track_h), tint)
+            live_here = live is not None and live[0] == row
+            if track not in (None, 0) and not len(wave) and not live_here:
+                p.setPen(QtGui.QColor(theme.c("#7f92a8")))
+                p.drawText(QtCore.QRectF(0, lane_top, self.width(), track_h), QtCore.Qt.AlignCenter,
+                           f"尚未錄音 · 選取這一軌後按「開始錄第 {track + 1} 軌」")
+                continue
+            base_pen = QtGui.QPen(QtGui.QColor(theme.c(color)), 1)
+            p.setPen(base_pen)
+            for pixel in range(12, self.width()-12):
+                t_main = self.x_time(pixel)
+                if live_here and t_main >= live[1]:
+                    _row, _start, times, peaks, live_color = live
+                    if len(times) and t_main <= times[-1]:
+                        i = min(len(peaks) - 1, int(np.searchsorted(times, t_main)))
+                        height = float(peaks[i]) * track_h * .38
+                        p.setPen(QtGui.QPen(QtGui.QColor(theme.c(live_color)), 1))
+                        p.drawLine(QtCore.QPointF(pixel, mid - height), QtCore.QPointF(pixel, mid + height))
+                    continue
+                t = t_main - shift
+                if not len(wave) or not 0 <= t < duration:
+                    continue
+                if segments:
+                    number = next((s[2] for s in segments if s[0] <= t < s[1]), segments[-1][2])
+                    p.setPen(QtGui.QPen(QtGui.QColor(theme.c(take_color(number, track or 0))), 1))
+                elif live_here:
+                    p.setPen(base_pen)
+                index = min(len(wave)-1, int(t/max(.001, duration)*len(wave)))
+                height = float(wave[index])*track_h*.38
+                p.drawLine(QtCore.QPointF(pixel, mid-height), QtCore.QPointF(pixel, mid+height))
+            # Seams between takes.
+            for start, _end, _number in segments[1:]:
+                x = self.time_x(start + shift)
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 130), 1))
+                p.drawLine(QtCore.QPointF(x, lane_top), QtCore.QPointF(x, lane_top + track_h))
         # Gray shading on deleted regions, selection outline on a retained clip.
         last = 0
         clips = [] if self.override_duration else self.project.clips
@@ -249,5 +298,5 @@ def _shared(name):
 
 
 for _name in ("video_wave", "back_wave", "back_duration", "video_duration",
-              "override_duration", "empty_text", "punch_live"):
+              "override_duration", "empty_text", "punch_live", "extra_waves", "selected_track"):
     setattr(MirrorTimeline, _name, _shared(_name))

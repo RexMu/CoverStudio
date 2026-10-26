@@ -191,6 +191,30 @@ class MediaTests(unittest.TestCase):
         _, early = wavfile.read(self.root/"early.wav")
         self.assertGreater(np.max(abs(early[:rate//10])), .1)
 
+    def test_extra_track_follows_backing_and_pans(self):
+        from saxstudio.model import Track
+        rate = 48000
+        # Track 2: a 1 s burst at 1.0 s on its own timeline, where the backing
+        # starts at 0.3 s. With the project offset 0.5 it lands at 1.2 s.
+        burst = np.zeros(rate * 3, np.float32)
+        burst[rate:2 * rate] = .25
+        wavfile.write(self.root/"第二軌.wav", rate, burst)
+        p = Project(mode="record", recording=str(self.root/"原音.wav"), backing=str(self.root/"伴奏.wav"),
+                    duration=4, clips=[Clip(0, 4)], video_muted=True, backing_muted=True, offset=.5)
+        p.effects.limiter_enabled = False
+        p.tracks.append(Track(name="Tenor", recording=str(self.root/"第二軌.wav"), duration=3,
+                              backing_offset=.3, pan=1.0))
+        out = self.root/"multi.wav"
+        render_mix(p, out)
+        _, data = wavfile.read(out)
+        self.assertLess(np.max(abs(data[:int(rate*1.15)])), .001)
+        self.assertGreater(np.max(abs(data[int(rate*1.25):int(rate*2.1), 1])), .15)
+        self.assertLess(np.max(abs(data[:, 0])), .001)      # panned hard right
+        p.tracks[0].muted = True
+        render_mix(p, out)
+        _, data = wavfile.read(out)
+        self.assertLess(np.max(abs(data)), .001)
+
     def test_nonoverlapping_backing_is_silent(self):
         p = self.project()
         for offset in [-10, 10]:

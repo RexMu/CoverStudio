@@ -1,9 +1,18 @@
 # Sax Cover Studio — 薩克斯風影片混音工作室（Windows 11／macOS Apple Silicon）
 
-**Beta V0.8** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
+**Beta V0.9** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
 **本次已驗證 Linux 的音訊／剪輯引擎與 Qt5 介面。新版 Qt6／Win11 播放、工作列圖示與 EXE 安裝仍需實機驗證；此交付包為原始碼，不包含預先建置的 Windows EXE。**
 
 ![實際介面，使用合成影音測試素材](docs/ui-screenshot.png)
+
+## Beta V0.9 更新：多軌錄音
+
+- **＋ 新增錄音軌**（時間剪輯左邊）：第一軌錄好後可再加第二、三軌（最多 3 軌），名稱可選 Alto／Tenor／Soprano／Baritone／人聲或自訂。軌道列表與時間軸一軌一列、彼此對齊；初始色青／橘／紫，伴奏金色。
+- **切換正在調整的軌**：效果面板上方的軌道分頁，或點左下的軌道列、時間軸上的波形列。選取的軌同時是 EQ／壓縮／混響的調整對象與錄音目標；錄音面板顯示「錄到：第 N 軌」與耳機會聽到的軌。
+- **錄新軌時的耳機**：伴奏＋其他已錄、沒有靜音的軌（原聲＋各軌音量與聲道位置，不含效果）。各軌錄音依伴奏對齊，調整伴奏位移時所有軌一起跟著伴奏。
+- 每軌各自的中途重錄、復原與分色；「⋯」選單可重新命名、清除錄音、刪除此軌（錄音檔保留，不刪檔）。
+- **🎚 聲道位置**：另開視窗調整每軌與伴奏的左右位置，可一鍵全部置中。
+- 總輸出限幅器作用於全部軌混音後。
 
 ## Beta V0.8 更新
 
@@ -152,7 +161,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Installer
    第一次需要網路（下載 Python 套件與 FFmpeg）。腳本會依序：建立 `.venv-mac`、安裝套件、下載並驗證 FFmpeg、執行功能測試、產生圖示、打包並做 ad-hoc 簽章、製作 dmg。
 3. 輸出：
    - `dist/Sax Cover Studio.app`
-   - `dist/SaxCoverStudio-BetaV0.8-macOS-AppleSilicon.dmg`
+   - `dist/SaxCoverStudio-BetaV0.9-macOS-AppleSilicon.dmg`
 4. 安裝：打開 dmg，把 App 拖到「應用程式」。**第一次開啟請在 App 上按右鍵 →「打開」**（App 沒有 Apple 開發者簽章與公證，直接雙擊會被 Gatekeeper 擋下）。若仍被擋，到「系統設定 → 隱私權與安全性」按「仍要打開」。
 
 FFmpeg 相關：
