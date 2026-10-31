@@ -445,7 +445,7 @@ class StorageTests(unittest.TestCase):
             first.write_bytes(b"1")
             self.assertEqual(storage.take_path(base, "x/月亮代表我的心.mp3", when=when).name,
                              "月亮代表我的心-20-04 (2).wav")
-            raw = storage.take_path(base, "a:b?.mp3", kind="重錄", number=1, when=when)
+            raw = storage.take_path(base, "a*b?.mp3", kind="重錄", number=1, when=when)
             self.assertEqual(raw.relative_to(base).as_posix(), "2026-10-31/重錄片段/a_b_-20-04-重錄1.wav")
             raw.write_bytes(b"r")
             old = storage.take_path(base, "a.mp3", when=when)
