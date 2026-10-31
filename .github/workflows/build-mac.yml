@@ -1,0 +1,41 @@
+name: Mac DMG（Apple Silicon）
+
+# 手動：Actions 頁面 → 「Mac DMG（Apple Silicon）」→ Run workflow
+# 注意：macOS 機器的分鐘數以 10 倍計算，只在需要時執行。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mac:
+    runs-on: macos-14          # M 系列（arm64）
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: 打包 App 與 DMG（含 FFmpeg 下載、功能測試）
+        run: |
+          set -o pipefail
+          bash scripts/build-mac.sh 2>&1 | tee build-mac.log || {
+            tail -c 6000 build-mac.log | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' > err.txt
+            echo "::error title=Mac 打包失敗::$(cat err.txt)"
+            exit 1
+          }
+
+      - name: 上傳 DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: SaxCoverStudio-macOS-AppleSilicon
+          path: dist/*.dmg
+          if-no-files-found: error
+          retention-days: 3
