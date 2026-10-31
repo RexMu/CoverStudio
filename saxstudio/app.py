@@ -15,12 +15,12 @@ from .help_dialog import HelpDialog
 from .help_text import COMP_HELP, EQ_HELP, PRESETS, REVB_HELP
 from .alignment import align_files
 from .engine import audio_origin, export, render_mix
-from . import recorder
+from . import recorder, storage
 from .media import active_range, decode_mono, decode_stereo, probe, thumbnail, waveform
 from .model import MAX_TRACKS, TRACK_NAMES, Clip, Effects, Project, Punch, PunchUndo, Track
 from .record_panel import CalibrationDialog, NewProjectDialog, PanDialog, RecordPanel
 from .qt import QT6, QtCore, QtGui, QtMultimedia, QtWidgets as W, QtMultimediaWidgets, Signal, player, source, state_stopped
-from .widgets import EQGraph, Timeline, Worker, take_color
+from .widgets import EQGraph, Timeline, WelcomeView, Worker, take_color
 
 VIDEO_FILTER = "影片 (*.mp4 *.mov *.mkv *.avi *.webm);;所有檔案 (*)"
 AUDIO_FILTER = "伴奏 (*.mp3 *.wav *.flac *.m4a *.aac *.ogg);;所有檔案 (*)"
@@ -411,6 +411,9 @@ class MainWindow(W.QMainWindow):
         self.video_stack.setMinimumSize(240, 135)
         self.video_stack.addWidget(self.video_empty)
         self.video_stack.addWidget(self.video_widget)
+        self.welcome = WelcomeView(asset_path)
+        self.video_stack.addWidget(self.welcome)
+        self.video_stack.setCurrentWidget(self.welcome)
         self.video_section = W.QWidget()
         video_layout = W.QVBoxLayout(self.video_section)
         video_layout.setContentsMargins(0, 0, 0, 0)
@@ -435,11 +438,8 @@ class MainWindow(W.QMainWindow):
         self.record_panel.volume_changed.connect(self.on_record_volume)
         self.record_panel.punch_requested.connect(self.start_punch)
         self.record_panel.undo_punch_requested.connect(self.undo_punch)
-        expanded = self.settings.value("record/settings_expanded", True)
-        # First use: open the settings so devices get picked; remembered afterwards.
-        self.record_panel.set_settings_expanded(expanded in (True, "true", "1", 1))
-        self.record_panel.settings_toggled.connect(
-            lambda on: self.settings.setValue("record/settings_expanded", bool(on)))
+        # Collapsed on every start: devices rarely change once set up.
+        self.record_panel.set_settings_expanded(False)
         self.h_split.addWidget(right_widget)
         self.h_split.setStretchFactor(0, 3)
         self.h_split.setStretchFactor(1, 2)
@@ -510,6 +510,7 @@ class MainWindow(W.QMainWindow):
         track_widget.setFixedWidth(310)
         tracks.addWidget(track_widget)
         self.timeline = Timeline()
+        self.timeline.show_demo = True
         self.timeline.seek.connect(self.seek)
         self.timeline.track_clicked.connect(self.select_track)
         tracks.addWidget(self.timeline, 1)
@@ -847,6 +848,19 @@ class MainWindow(W.QMainWindow):
         name = (name or "").strip()
         if not ok or not name:
             return
+        if not p.folder:
+            folder = storage.multitrack_folder(self.recordings_dir(), p.backing)
+            answer = W.QMessageBox.question(
+                self, "多軌專案目錄",
+                f"要把這個專案改成多軌專案目錄嗎？\n\n會建立：{folder}\n"
+                "並把第一軌目前使用的錄音（含中途重錄的檔案）搬進去，之後各軌的錄音都存在這裡。\n"
+                "選「否」則照舊存在當天的日期目錄。",
+                W.QMessageBox.Yes | W.QMessageBox.No, W.QMessageBox.Yes)
+            if answer == W.QMessageBox.Yes:
+                failed = storage.move_project_files(p, folder)
+                if failed:
+                    self.show_error("有些錄音檔無法搬移，仍保留在原位置：\n" +
+                                    "\n".join(f"{path}（{err}）" for path, err in failed))
         effects = Effects()
         effects.limiter_enabled = p.effects.limiter_enabled
         p.tracks.append(Track(name=name[:20], effects=effects))
@@ -1204,7 +1218,7 @@ class MainWindow(W.QMainWindow):
     # ------------------------------------------------------------ audio devices
     def ensure_session(self):
         if not recorder.audio_available():
-            self.record_panel.set_unavailable("此環境的 Qt 不支援錄音；請使用 Windows 版（PySide6／Qt 6）。")
+            self.record_panel.set_unavailable("此版本的 Qt 不支援錄音（需要 PySide6／Qt 6）。")
             return False
         if self.session is None:
             self.session = recorder.AudioSession(self)
@@ -1351,6 +1365,14 @@ class MainWindow(W.QMainWindow):
             self.session.sink.setVolume(min(1.0, 10 ** (value_db / 20)))
 
     # ------------------------------------------------------------ recording
+    def take_path(self, target, kind="", number=0):
+        """New recording file: day folder (or the multi-track folder), named
+        after the backing and the time; track names are added once the
+        project has more than one track."""
+        p = self.project
+        name = p.track(target).name if (target > 0 or p.folder or p.tracks) else ""
+        return storage.take_path(self.recordings_dir(), p.backing, p.folder, name, kind, number)
+
     def recordings_dir(self):
         paths = QtCore.QStandardPaths
         location = getattr(getattr(paths, "StandardLocation", paths), "DocumentsLocation")
@@ -1417,9 +1439,7 @@ class MainWindow(W.QMainWindow):
         self.launch(task, ready)
 
     def begin_take(self, samples, target=0, baked=False):
-        stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd-HHmmss")
-        suffix = "" if target == 0 else f"-第{target + 1}軌"
-        path = self.recordings_dir() / f"錄音-{stamp}{suffix}.wav"
+        path = self.take_path(target)
         countdown = self.record_panel.countdown
         volume = 1.0 if baked else min(1.0, 10 ** (self.record_panel.volume_db / 20))
         self.live_peaks = []
@@ -1614,9 +1634,7 @@ class MainWindow(W.QMainWindow):
         p = self.project
         track = p.track(target)
         shift = p.track_shift(target)
-        stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd-HHmmss")
-        suffix = "" if target == 0 else f"-第{target + 1}軌"
-        path = self.recordings_dir() / f"錄音-{stamp}{suffix}-重錄{len(track.punches) + 1}.wav"
+        path = self.take_path(target, "重錄", len(track.punches) + 1)
         self.record_panel.reset_clip()
         self.record_panel.clip_label.setText("重錄中…")
         self.take_track = target
@@ -1648,10 +1666,8 @@ class MainWindow(W.QMainWindow):
         track = p.track(target)
         latency = self.current_latency() or 0.0
         old_path = track.recording
-        stamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd-HHmmss")
         number = len(track.punches) + 1
-        suffix = "" if target == 0 else f"-第{target + 1}軌"
-        out = self.recordings_dir() / f"錄音-{stamp}{suffix}-合成{number}.wav"
+        out = self.take_path(target, "合成", number)
         def task(cancel, progress):
             progress("正在接合重錄…")
             old = decode_mono(old_path, rate=48000, cancel=cancel)
@@ -1666,7 +1682,7 @@ class MainWindow(W.QMainWindow):
             seconds, wave = analysis
             track.punch_undo.append(PunchUndo(old_path, track.duration,
                                               copy.deepcopy(p.clips) if target == 0 else []))
-            track.punches.append(Punch(punch["start"], number))
+            track.punches.append(Punch(punch["start"], number, result.path))
             track.recording = str(out)
             track.duration = seconds
             if target == 0:
@@ -2219,6 +2235,14 @@ class MainWindow(W.QMainWindow):
         self.set_recording_ui(self.recording_active)
         self.update_record_buttons()
 
+    def default_project_path(self):
+        p = self.project
+        if not p.is_record or not p.recording:
+            return "演奏混音.saxproj"
+        folder = Path(p.folder) if p.folder else Path(p.recording).parent
+        stamp = QtCore.QDateTime.currentDateTime().toString("HH-mm")
+        return str(storage.unique_path(folder, f"{storage.safe_stem(p.backing)}-{stamp}", ".saxproj"))
+
     def save_project(self):
         if self.busy or self.recording_active or not self.project.source:
             if self.project.is_record and not self.project.source:
@@ -2226,7 +2250,8 @@ class MainWindow(W.QMainWindow):
             return
         path = self.project_path
         if not path:
-            path, _ = W.QFileDialog.getSaveFileName(self, "儲存專案", "演奏混音.saxproj", f"{APP_NAME} 專案 (*.saxproj)")
+            path, _ = W.QFileDialog.getSaveFileName(self, "儲存專案", self.default_project_path(),
+                                                    f"{APP_NAME} 專案 (*.saxproj)")
         if not path:
             return
         if not str(path).lower().endswith(".saxproj"):

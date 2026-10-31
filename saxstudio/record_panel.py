@@ -175,7 +175,7 @@ class RecordPanel(W.QFrame):
         fold_head = W.QHBoxLayout()
         fold_head.setSpacing(8)
         # The whole header row is one flat, transparent button (text + arrow).
-        self.fold_button = W.QPushButton("▸  ⚙ 錄音設定")
+        self.fold_button = W.QPushButton("⚙ 錄音設定")
         self.fold_button.setObjectName("foldButton")
         self.fold_button.setCheckable(True)
         self.fold_button.setFlat(True)
@@ -189,13 +189,28 @@ class RecordPanel(W.QFrame):
                     " QPushButton#foldButton:hover { color: #75ded5; }")
         self.fold_button.toggled.connect(self.set_settings_expanded)
         fold_head.addWidget(self.fold_button, 1)
+        self.fold_hint = W.QPushButton("點擊展開 ▸")
+        self.fold_hint.setObjectName("foldHint")
+        self.fold_hint.setFlat(True)
+        self.fold_hint.setCursor(QtCore.Qt.PointingHandCursor)
+        theme.apply(self.fold_hint, "QPushButton#foldHint { background: transparent; border: none;"
+                                    " color: #91a4b9; font-size: 12px; padding: 2px 0; }"
+                                    " QPushButton#foldHint:hover { color: #75ded5; }")
+        self.fold_hint.clicked.connect(self.fold_button.toggle)
+        fold_head.addWidget(self.fold_hint)
+        fold_box.addLayout(fold_head)
+        summary_row = W.QHBoxLayout()
+        summary_row.setSpacing(8)
         self.latency_warn = W.QLabel("⚠ 延遲尚未校正")
         theme.apply(self.latency_warn, "color: #e9b853; font-size: 12px;")
-        fold_head.addWidget(self.latency_warn)
-        fold_box.addLayout(fold_head)
+        summary_row.addWidget(self.latency_warn)
         self.summary = ElidedLabel("")
         self.summary.setObjectName("muted")
-        fold_box.addWidget(self.summary)
+        summary_row.addWidget(self.summary, 1)
+        self.summary_row = W.QWidget()
+        self.summary_row.setLayout(summary_row)
+        summary_row.setContentsMargins(0, 0, 0, 0)
+        fold_box.addWidget(self.summary_row)
         self.fold_body = W.QWidget()
         body = W.QVBoxLayout(self.fold_body)
         body.setContentsMargins(0, 4, 0, 0)
@@ -363,6 +378,10 @@ class RecordPanel(W.QFrame):
         box.addWidget(self.file_label)
         self.states.addWidget(done)
         layout.addWidget(self.states)
+        # A stacked widget is as tall as its tallest page; size it to the page
+        # on show so the hint sits right under the record button.
+        self.states.currentChanged.connect(self._fit_states)
+        self._fit_states(self.states.currentIndex())
         self.unavailable = W.QLabel("")
         self.unavailable.setWordWrap(True)
         theme.apply(self.unavailable, "color: #ffb5ac;")
@@ -400,8 +419,8 @@ class RecordPanel(W.QFrame):
         """Sustained full-scale input (see recorder.is_clipping)."""
         self.meter.clipped = True
         self.meter.update()
-        self.clip_label.setText("⚠ 破音了！請調低錄音介面的輸入增益；"
-                                "若介面燈號未亮，請檢查 Windows 錄音裝置音量是否為 100 並關閉音訊增強")
+        from .recorder import clip_help_text
+        self.clip_label.setText(clip_help_text())
         theme.apply(self.clip_label, "color: #ff8a7a; font-weight: 600;")
 
     def reset_clip(self):
@@ -421,6 +440,14 @@ class RecordPanel(W.QFrame):
             theme.apply(self.latency_value, "font-weight: 600; color: #32d4ce;")
             self.calibrate_button.setText("重新校正")
 
+    def _fit_states(self, index):
+        for i in range(self.states.count()):
+            page = self.states.widget(i)
+            vertical = W.QSizePolicy.Preferred if i == index else W.QSizePolicy.Ignored
+            page.setSizePolicy(W.QSizePolicy.Preferred, vertical)
+        self.states.setSizePolicy(W.QSizePolicy.Preferred, W.QSizePolicy.Maximum)
+        self.states.updateGeometry()
+
     def set_state(self, state):
         index = {"ready": 0, "recording": 1, "countdown": 1, "punch": 1, "done": 2}[state]
         self.states.setCurrentIndex(index)
@@ -432,6 +459,7 @@ class RecordPanel(W.QFrame):
         else:
             self.fold_body.setVisible(self.fold_button.isChecked())
         self.fold_button.setEnabled(not busy)
+        self.fold_hint.setEnabled(not busy)
         if state == "punch":
             self.rec_state.setText("◔ 預備中")
             theme.apply(self.rec_state, "color: #e9b853; font-weight: 700;")
@@ -509,9 +537,9 @@ class RecordPanel(W.QFrame):
             self.fold_button.blockSignals(True)
             self.fold_button.setChecked(expanded)
             self.fold_button.blockSignals(False)
-        self.fold_button.setText(("▾" if expanded else "▸") + "  ⚙ 錄音設定")
+        self.fold_hint.setText("點擊收合 ▾" if expanded else "點擊展開 ▸")
         self.fold_body.setVisible(expanded)
-        self.summary.setVisible(not expanded)
+        self.summary_row.setVisible(not expanded)
         self.settings_toggled.emit(expanded)
 
     def update_summary(self):

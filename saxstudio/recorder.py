@@ -14,6 +14,7 @@ Hence the project offset is start_offset + latency.
 from __future__ import annotations
 
 import struct
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -128,6 +129,24 @@ def measure_latency(captured, rate, start_offset, click_times, max_latency=.45):
 def recording_offset(start_offset, latency_ms):
     """Backing position on the recording timeline (project offset, seconds)."""
     return start_offset + latency_ms / 1000
+
+
+def mic_failed_text(platform=None):
+    """Platform-specific help when the microphone cannot be opened."""
+    if (platform or sys.platform) == "darwin":
+        return ("無法開啟麥克風。請到「系統設定 → 隱私權與安全性 → 麥克風」允許 Sax Cover Studio，"
+                "並確認錄音介面已連接；更改權限後請重新開啟程式。")
+    return ("無法開啟麥克風。請到 Windows「設定 → 隱私權與安全性 → 麥克風」"
+            "允許桌面應用程式存取麥克風，並確認錄音介面已連接。")
+
+
+def clip_help_text(platform=None):
+    """What to check when the app flags clipping but the interface does not."""
+    if (platform or sys.platform) == "darwin":
+        return ("⚠ 破音了！請調低錄音介面的輸入增益；若介面燈號未亮，請檢查「系統設定 → 聲音 → 輸入」"
+                "的輸入音量，或「音訊 MIDI 設定」中錄音介面的輸入音量")
+    return ("⚠ 破音了！請調低錄音介面的輸入增益；"
+            "若介面燈號未亮，請檢查 Windows 錄音裝置音量是否為 100 並關閉音訊增強")
 
 
 PREROLL = 3.0      # seconds heard before a punch-in point
@@ -376,8 +395,7 @@ def _make_session_class():
             self.source_io = self.source.start()
             if self.source_io is None or self.source.error() != audio_ns.Error.NoError:
                 self.close_input()
-                self.failed.emit("無法開啟麥克風。請到 Windows「設定 → 隱私權與安全性 → 麥克風」"
-                                 "允許桌面應用程式存取麥克風，並確認錄音介面已連接。")
+                self.failed.emit(mic_failed_text())
                 return False
             self.timer.start()
             return True

@@ -432,5 +432,41 @@ class PunchModelTest(unittest.TestCase):
             self.assertEqual(Project.load(path).punches, [])
 
 
+class StorageTests(unittest.TestCase):
+    def test_names_folders_and_moving_a_project(self):
+        from datetime import datetime
+        from saxstudio import storage
+        from saxstudio.model import Clip, Project, Punch, PunchUndo
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            when = datetime(2026, 10, 31, 20, 4)
+            first = storage.take_path(base, "D:/伴奏/月亮代表我的心.mp3", when=when)
+            self.assertEqual(first.relative_to(base).as_posix(), "2026-10-31/月亮代表我的心-20-04.wav")
+            first.write_bytes(b"1")
+            self.assertEqual(storage.take_path(base, "x/月亮代表我的心.mp3", when=when).name,
+                             "月亮代表我的心-20-04 (2).wav")
+            raw = storage.take_path(base, "a:b?.mp3", kind="重錄", number=1, when=when)
+            self.assertEqual(raw.relative_to(base).as_posix(), "2026-10-31/重錄片段/a_b_-20-04-重錄1.wav")
+            raw.write_bytes(b"r")
+            old = storage.take_path(base, "a.mp3", when=when)
+            old.write_bytes(b"o")
+            p = Project(mode="record", recording=str(first), duration=1, clips=[Clip(0, 1)],
+                        punches=[Punch(.5, 1, str(raw))], punch_undo=[PunchUndo(str(old), 1)])
+            target = storage.multitrack_folder(base, "月亮代表我的心.mp3", when)
+            self.assertEqual(target.name, "月亮代表我的心-多軌專案")
+            self.assertEqual(storage.move_project_files(p, target), [])
+            self.assertEqual(Path(p.recording).parent, target)
+            self.assertEqual(Path(p.punches[0].take).parent, target / storage.PUNCH_FOLDER)
+            self.assertTrue(Path(p.punch_undo[0].recording).is_file())
+            self.assertEqual(p.folder, str(target))
+            self.assertFalse(first.exists())
+
+    def test_platform_messages(self):
+        from saxstudio.recorder import clip_help_text, mic_failed_text
+        self.assertNotIn("Windows", mic_failed_text("darwin"))
+        self.assertNotIn("Windows", clip_help_text("darwin"))
+        self.assertIn("Windows", mic_failed_text("win32"))
+
+
 if __name__ == "__main__":
     unittest.main()

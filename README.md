@@ -1,9 +1,19 @@
 # Sax Cover Studio — 薩克斯風影片混音工作室（Windows 11／macOS Apple Silicon）
 
-**Beta V0.9** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
+**Beta V0.10** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
 **本次已驗證 Linux 的音訊／剪輯引擎與 Qt5 介面。新版 Qt6／Win11 播放、工作列圖示與 EXE 安裝仍需實機驗證；此交付包為原始碼，不包含預先建置的 Windows EXE。**
 
 ![實際介面，使用合成影音測試素材](docs/ui-screenshot.png)
+
+## Beta V0.10 更新
+
+- **錄音檔存放**：文件／Sax Cover Studio／錄音／日期／，檔名「伴奏名-時-分.wav」（同一分鐘再錄加「(2)」）；中途重錄的合成檔放同一目錄，原始重錄片段收在「重錄片段」子資料夾。
+- **多軌專案目錄**：按「＋ 新增錄音軌」時可選擇建立「伴奏名-多軌專案」目錄，把這個專案第一軌正在用的錄音（含重錄檔）搬進去，之後各軌都存在這裡，檔名加軌名。
+- 「儲存專案」預設存到錄音所在目錄，檔名「伴奏名-時-分.saxproj」。
+- **Mac 提示文字**：無法開啟麥克風、破音提醒改為 Mac 的系統設定說明。
+- 錄音設定每次開啟都收折，右側「點擊展開／點擊收合」；開始錄音按鈕下方的提示緊貼按鈕。
+- **功能說明**分成「介紹」「功能一覽」「錄音快速上手」三個分頁。
+- **開始畫面**：右側顯示錄音室圖片（暗色／米黃亮色各一張），下方時間軸顯示範例波形。
 
 ## Beta V0.9 更新：多軌錄音
 
@@ -161,7 +171,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Installer
    第一次需要網路（下載 Python 套件與 FFmpeg）。腳本會依序：建立 `.venv-mac`、安裝套件、下載並驗證 FFmpeg、執行功能測試、產生圖示、打包並做 ad-hoc 簽章、製作 dmg。
 3. 輸出：
    - `dist/Sax Cover Studio.app`
-   - `dist/SaxCoverStudio-BetaV0.9-macOS-AppleSilicon.dmg`
+   - `dist/SaxCoverStudio-BetaV0.10-macOS-AppleSilicon.dmg`
 4. 安裝：打開 dmg，把 App 拖到「應用程式」。**第一次開啟請在 App 上按右鍵 →「打開」**（App 沒有 Apple 開發者簽章與公證，直接雙擊會被 Gatekeeper 擋下）。若仍被擋，到「系統設定 → 隱私權與安全性」按「仍要打開」。
 
 FFmpeg 相關：

@@ -209,10 +209,12 @@ class UITests(unittest.TestCase):
     def test_help_dialog_shows_introduction_and_features(self):
         from saxstudio.help_dialog import HelpDialog
         dialog = HelpDialog(self.window)
-        text = dialog.browser.toPlainText()
+        self.assertEqual([dialog.tabs.tabText(i) for i in range(3)], ["介紹", "功能一覽", "錄音快速上手"])
+        text = dialog.plain_text()
         self.assertIn("專為薩克斯風愛好者打造", text)
+        self.assertIn("多軌錄音", text)
+        self.assertIn("建立錄音專案", text)
         self.assertIn("分軌錄音，讓每個聲音都能獨立調整", text)
-        self.assertIn("功能一覽", text)
         self.assertIn("時間剪輯", text)
         dialog.close()
 
@@ -464,9 +466,9 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.9")
+        self.assertEqual(VERSION_LABEL, "Beta V0.10")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
-        self.assertIn("Beta V0.9", self.window.windowTitle())
+        self.assertIn("Beta V0.10", self.window.windowTitle())
         sheet = style_sheet()
         self.assertNotIn("@UP@", sheet)
         for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):
@@ -559,7 +561,8 @@ with TemporaryDirectory() as config:
         w.finish_recording(TakeResult(str(self.make_take()), 3.0, 48000, 1.0, .5))
         self.wait_job()
         self.assertTrue(w.add_track_button.isEnabled())
-        with patch.object(QtWidgets.QInputDialog, "getItem", return_value=("Tenor", True)):
+        with patch.object(QtWidgets.QInputDialog, "getItem", return_value=("Tenor", True)), \
+                patch.object(QtWidgets.QMessageBox, "question", return_value=QtWidgets.QMessageBox.No):
             w.add_track()
         p = w.project
         self.assertEqual([t.name for t in p.tracks], ["Tenor"])
@@ -612,6 +615,25 @@ with TemporaryDirectory() as config:
         self.assertEqual(w.project.tracks, [])
         self.assertTrue(w.track_tabs.isHidden())
         self.assertEqual(w.selected_track, 0)
+
+    def test_start_screen_shows_welcome_picture_and_demo_waves(self):
+        w = self.window
+        self.assertIs(w.video_stack.currentWidget(), w.welcome)
+        self.assertFalse(w.welcome.pixmap().isNull())
+        self.assertTrue(w.timeline.show_demo)
+        w.timeline.repaint()
+        self.assertIsNotNone(w.timeline._demo)
+        w.toggle_theme()
+        self.assertFalse(w.welcome.pixmap().isNull())
+        w.toggle_theme()
+
+    def test_record_panel_starts_collapsed_and_fits_its_page(self):
+        panel = self.window.record_panel
+        self.assertTrue(panel.fold_body.isHidden())
+        self.assertIn("點擊展開", panel.fold_hint.text())
+        panel.fold_hint.click()
+        self.assertFalse(panel.fold_body.isHidden())
+        self.assertIn("點擊收合", panel.fold_hint.text())
 
     def test_new_project_dialog_routes_to_mode(self):
         from saxstudio.record_panel import NewProjectDialog

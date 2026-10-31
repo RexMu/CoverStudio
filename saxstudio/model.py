@@ -43,6 +43,7 @@ class Punch:
     """A punch-in: everything from `start` (recording time) on is take `number`."""
     start: float
     number: int
+    take: str = ""      # raw punch-in recording (kept in 重錄片段/)
 
 
 @dataclass
@@ -141,6 +142,8 @@ class Project:
     video_pan: float = 0.0
     backing_pan: float = 0.0
     tracks: list[Track] = field(default_factory=list)
+    # Multi-track project folder holding all its recordings ("" = day folders).
+    folder: str = ""
 
     def track(self, index):
         """0 = track 1 (fields on the project), 1.. = extra tracks."""
@@ -267,6 +270,8 @@ class Project:
                 data[key] = str(Path(data[key]).resolve())
         for undo in data["punch_undo"]:
             undo["recording"] = str(Path(undo["recording"]).resolve())
+        if data["folder"]:
+            data["folder"] = str(Path(data["folder"]).resolve())
         for track in data["tracks"]:
             if track["recording"]:
                 track["recording"] = str(Path(track["recording"]).resolve())

@@ -1,3 +1,15 @@
+# Sax Cover Studio Beta V0.10
+
+以 Beta V0.9 為基礎。
+
+- `storage.py`：錄音路徑（日期目錄、伴奏名-時-分、重名加 (2)、`重錄片段/`）、`multitrack_folder()`、`move_project_files()`。`Project.folder`、`Punch.take` 記錄多軌目錄與原始重錄片段。
+- `recorder.mic_failed_text()`／`clip_help_text()` 依平台顯示說明。
+- 錄音面板：預設收折、`fold_hint`、延遲警告移到摘要列；狀態頁面高度隨目前頁面（`_fit_states`）。
+- 功能說明：`FEATURE_GROUPS`、`QUICKSTART`，`HelpDialog` 三個分頁。
+- 開始畫面：`WelcomeView`（assets/welcome-dark.jpg、welcome-light.jpg）與 `Timeline.paint_demo()`。
+
+---
+
 # Sax Cover Studio Beta V0.9
 
 以 Beta V0.8 為基礎：錄音模式多軌（最多 3 軌）。

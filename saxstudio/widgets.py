@@ -72,6 +72,68 @@ def take_color(number, track=0):
     return PUNCH_COLORS[(track * 2 + number - 1) % len(PUNCH_COLORS)]
 
 
+def demo_waves(n=900):
+    """Deterministic example envelopes: a sax line with phrases and breaths,
+    and a steadier backing with a beat."""
+    rng = np.random.default_rng(11)
+    x = np.linspace(0, 1, n)
+    sax = (.25 + .7 * np.abs(np.sin(x * np.pi * 9)) ** .6) * (.6 + .4 * rng.random(n))
+    sax[(x < .06) | (x > .94)] = .03 * rng.random(((x < .06) | (x > .94)).sum())
+    beat = (np.arange(n) % 22 < 3) * .25
+    back = (.55 + beat + .15 * np.sin(x * np.pi * 3)) * (.75 + .25 * rng.random(n))
+    back[x < .02] = .02
+    return np.clip(sax, 0, 1), np.clip(back, 0, 1)
+
+
+class WelcomeView(QtWidgets.QWidget):
+    """Start screen in the preview area: studio picture (per theme) and a hint."""
+
+    def __init__(self, asset, parent=None):
+        super().__init__(parent)
+        self.asset = asset
+        self.pixmaps = {}
+        self.setMinimumSize(240, 135)
+
+    def pixmap(self):
+        name = "welcome-light.jpg" if theme.is_light() else "welcome-dark.jpg"
+        if name not in self.pixmaps:
+            self.pixmaps[name] = QtGui.QPixmap(str(self.asset(name)))
+        return self.pixmaps[name]
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+        rect = self.rect()
+        clip = QtGui.QPainterPath()
+        clip.addRoundedRect(QtCore.QRectF(rect), 8, 8)
+        p.setClipPath(clip)
+        pix = self.pixmap()
+        if not pix.isNull():
+            # Cover: fill the area, crop the overflow, keep the centre.
+            scaled = pix.scaled(rect.size(), QtCore.Qt.KeepAspectRatioByExpanding, QtCore.Qt.SmoothTransformation)
+            x = (scaled.width() - rect.width()) // 2
+            y = (scaled.height() - rect.height()) // 2
+            p.drawPixmap(rect, scaled, QtCore.QRect(x, y, rect.width(), rect.height()))
+        else:
+            p.fillRect(rect, QtGui.QColor(theme.c("#0b121c")))
+        shade = QtGui.QLinearGradient(0, rect.height() * .55, 0, rect.height())
+        shade.setColorAt(0, QtGui.QColor(0, 0, 0, 0))
+        shade.setColorAt(1, QtGui.QColor(0, 0, 0, 185))
+        p.fillRect(rect, shade)
+        p.setPen(QtGui.QColor("#ffffff"))
+        font = p.font()
+        font.setPixelSize(19)
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(QtCore.QRectF(18, rect.height() - 64, rect.width() - 36, 28),
+                   QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, "按「新專案」開始")
+        font.setPixelSize(12)
+        font.setBold(False)
+        p.setFont(font)
+        p.drawText(QtCore.QRectF(18, rect.height() - 36, rect.width() - 36, 22),
+                   QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, "匯入演奏影片重新混音，或戴上耳機跟著伴奏錄音")
+
+
 class Timeline(QtWidgets.QWidget):
     seek = Signal(float)
     select = Signal(int)
@@ -93,6 +155,8 @@ class Timeline(QtWidgets.QWidget):
         self.extra_waves = []
         # Track being edited / recorded (0 = track 1); its lane is highlighted.
         self.selected_track = 0
+        self.show_demo = False
+        self._demo = None
         # A take in progress: (row, start, times, peaks, colour) on track 1's
         # timeline. From `start` on that row only the new take is drawn.
         self.punch_live = None
@@ -114,6 +178,33 @@ class Timeline(QtWidgets.QWidget):
         if not self.project:
             return 0
         return max(0, min(self.total(), (x-12)/max(1, self.width()-24)*self.total()))
+
+    def paint_demo(self, p):
+        """Example waveforms before any project exists (start screen)."""
+        if self._demo is None:
+            self._demo = demo_waves()
+        p.setPen(QtGui.QColor(theme.c("#7f92a8")))
+        for i, label in enumerate(("0:00", "0:30", "1:00", "1:30", "2:00", "2:30", "3:00")):
+            x = 12 + i / 6 * max(1, self.width() - 24)
+            p.drawText(int(x) - 22, 2, 48, 20, QtCore.Qt.AlignCenter, label)
+        rows = 2
+        h = (self.height() - self.TOP - self.BOTTOM - self.GAP) / rows
+        for row, (wave, color) in enumerate(zip(self._demo, (take_color(0, 0), "#e9b853"))):
+            mid = self.TOP + row * (h + self.GAP) + h / 2
+            p.setPen(QtGui.QPen(QtGui.QColor(theme.c(color)), 1))
+            width = max(1, self.width() - 24)
+            for pixel in range(12, self.width() - 12):
+                height = float(wave[min(len(wave) - 1, int((pixel - 12) / width * len(wave)))]) * h * .38
+                p.drawLine(QtCore.QPointF(pixel, mid - height), QtCore.QPointF(pixel, mid + height))
+        text = "範例波形 · 開啟或建立專案後顯示你的音訊"
+        metrics = p.fontMetrics()
+        w = metrics.horizontalAdvance(text) + 16
+        badge = QtCore.QRectF(self.width() - w - 10, 4, w, 18)
+        p.setPen(QtGui.QColor(theme.c("#2c4156")))
+        p.setBrush(QtGui.QColor(theme.c("#16263a")))
+        p.drawRoundedRect(badge, 8, 8)
+        p.setPen(QtGui.QColor(theme.c("#8ea3b6")))
+        p.drawText(badge, QtCore.Qt.AlignCenter, text)
 
     # ---- rows
     def row_count(self):
@@ -180,6 +271,10 @@ class Timeline(QtWidgets.QWidget):
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor(theme.c("#101b27")))
+        if self.show_demo and self.project is not None and not self.project.source \
+                and not self.project.backing and not self.override_duration:
+            self.paint_demo(p)
+            return
         if not self.project or self.total() <= 0:
             p.setPen(QtGui.QColor(theme.c("#7f92a8")))
             p.drawText(self.rect(), QtCore.Qt.AlignCenter, self.empty_text)
