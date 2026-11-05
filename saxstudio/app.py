@@ -1193,6 +1193,7 @@ class MainWindow(W.QMainWindow):
             self.session.close_input()
         if not self.recording_active:
             self.sync_tracks_ui()
+        self.apply_playback_device()
         self.timeline.update()
 
     def set_recording_ui(self, active):
@@ -1229,6 +1230,9 @@ class MainWindow(W.QMainWindow):
             self.session.take_finished.connect(self.finish_recording)
             self.session.calibration_finished.connect(self.on_calibration_result)
             self.session.failed.connect(self.on_record_failed)
+            # Follow plugging/unplugging: fall back to the default output.
+            self.media_devices = QtMultimedia.QMediaDevices(self)
+            self.media_devices.audioOutputsChanged.connect(self.apply_playback_device)
             self.populate_devices()
         elif not self.session.input_open:
             self.open_selected_input()
@@ -1340,6 +1344,7 @@ class MainWindow(W.QMainWindow):
             self.record_panel.format_label.setText(f"{self.session.rate/1000:g} kHz · 32-bit 浮點 · 單聲道")
         self.record_panel.set_latency(self.current_latency())
         self.update_record_buttons()
+        self.apply_playback_device()
 
     def on_record_device_changed(self):
         if self.session is None or self.recording_active:
@@ -1354,8 +1359,24 @@ class MainWindow(W.QMainWindow):
             self.settings.setValue("record/input", input_key)
         if self.selected_output() is not None:
             self.settings.setValue("record/output", recorder.device_key(self.selected_output()))
+        self.apply_playback_device()
         self.settings.setValue("record/channel", int(panel.channel_combo.currentData() or 0))
         self.open_selected_input()
+
+    def apply_playback_device(self):
+        """Record mode plays back through the headphone output chosen in the
+        record settings (e.g. the audio interface); otherwise, or when that
+        device is gone, through the system default output."""
+        out = getattr(getattr(self, "audio_player", None), "_audio_output", None)
+        if out is None or not hasattr(QtMultimedia, "QMediaDevices"):
+            return
+        devices = QtMultimedia.QMediaDevices
+        chosen = self.selected_output() if self.project.is_record and self.session is not None else None
+        if chosen is not None:
+            available = {recorder.device_key(d) for d in devices.audioOutputs()}
+            if recorder.device_key(chosen) not in available:
+                chosen = None
+        out.setDevice(chosen if chosen is not None else devices.defaultAudioOutput())
 
     def on_record_volume(self, value_db):
         self.settings.setValue("record/volume", value_db)
@@ -1409,9 +1430,10 @@ class MainWindow(W.QMainWindow):
             return
         if track.recording:
             answer = W.QMessageBox.question(
-                self, "重錄", f"重錄會取代「{track.name}」目前的整段錄音" +
-                ("（中途重錄的紀錄也會清除）" if track.punches else "") +
-                "。\n伴奏、EQ／壓縮／混響、音量與延遲校正都會保留。\n要開始重錄嗎？",
+                self, "重錄", f"重錄會取代「{track.name}」目前的整段錄音。\n"
+                "錄完後，這一軌目前的錄音" + ("與所有中途重錄檔" if track.punches else "") +
+                "會移到垃圾桶（可從垃圾桶救回）。\n"
+                "伴奏、EQ／壓縮／混響、音量與延遲校正都會保留。\n要開始重錄嗎？",
                 W.QMessageBox.Yes | W.QMessageBox.No, W.QMessageBox.Yes)
             if answer != W.QMessageBox.Yes:
                 return
@@ -1550,6 +1572,7 @@ class MainWindow(W.QMainWindow):
         def done(analysis):
             info, wave = analysis
             p = self.project
+            replaced = self.track_files(p.track(0))
             p.recording = path
             p.duration = info["duration"]
             p.clips = [Clip(0, p.duration)]
@@ -1566,6 +1589,9 @@ class MainWindow(W.QMainWindow):
             self.mark_dirty(audio=True)
             self.record_panel.set_done(p.duration, path)
             self.record_offset_label.setText(f"位移由錄音時間自動計算（已扣除 {latency:.1f} ms 延遲），可再手動微調")
+            failed = self.trash_files(replaced, keep={path})
+            if failed:
+                self.show_error(f"有 {failed} 個舊錄音檔無法移到垃圾桶，仍保留在錄音資料夾。")
             if result.peak >= .985:
                 self.statusBar().showMessage("錄音完成，但有破音；建議調低錄音介面的輸入增益後重錄")
             elif p.tracks:
@@ -1575,6 +1601,23 @@ class MainWindow(W.QMainWindow):
             self.refresh()
         self.record_panel.set_state("done" if self.project.recording else "ready")
         self.launch(task, done)
+
+    @staticmethod
+    def track_files(track):
+        """Every recording file a track uses: current take, undo versions, raw punch-ins."""
+        files = [track.recording] + [u.recording for u in track.punch_undo] + [x.take for x in track.punches]
+        return list(dict.fromkeys(f for f in files if f))
+
+    def trash_files(self, paths, keep=()):
+        """Move replaced recordings to the system trash; returns how many failed."""
+        failed = 0
+        for path in paths:
+            if path in keep or not Path(path).is_file():
+                continue
+            result = QtCore.QFile.moveToTrash(path)
+            ok = result[0] if isinstance(result, tuple) else bool(result)
+            failed += not ok
+        return failed
 
     def finish_extra_take(self, result):
         fresh, self.fresh = self.fresh, None
@@ -1590,11 +1633,14 @@ class MainWindow(W.QMainWindow):
             return probe(path, cancel), waveform(path, cancel)
         def done(analysis):
             info, wave = analysis
+            replaced = self.track_files(track)
             track.recording, track.duration, track.backing_offset = path, info["duration"], offset
             track.punches, track.punch_undo = [], []
             self.timeline.extra_waves[target - 1] = wave
             self.sync_tracks_ui()
             self.mark_dirty(audio=True)
+            if self.trash_files(replaced, keep={path}):
+                self.show_error("有些舊錄音檔無法移到垃圾桶，仍保留在錄音資料夾。")
             message = f"{self.track_label(target)} 錄音完成"
             self.statusBar().showMessage(message + ("，但有破音；建議調低輸入增益後重錄" if result.peak >= .985
                                                     else "；按播放聽合奏"))
@@ -1983,6 +2029,7 @@ class MainWindow(W.QMainWindow):
         self.playing = True
         self.play_button.setText("Ⅱ 暫停")
         self.edit_dialog.play_button.setText("Ⅱ 暫停")
+        self.record_panel.set_playing(True)
 
     def pause(self):
         if hasattr(self, "video_player"):
@@ -1994,6 +2041,8 @@ class MainWindow(W.QMainWindow):
             self.play_button.setText("▶ 播放")
         if hasattr(self, "edit_dialog"):
             self.edit_dialog.play_button.setText("▶ 播放")
+        if hasattr(self, "record_panel"):
+            self.record_panel.set_playing(False)
 
     def stop(self):
         self.resume_after_render = False

@@ -42,39 +42,51 @@ PRESETS = [
 
 # 「功能說明」 introduction (author's text, kept verbatim).
 _H2 = "<h2 style='color:#e9b853; font-size:17px; margin:20px 0 6px'>{}</h2>"
-_P = "<p style='margin:0 0 10px; line-height:170%'>{}</p>"
+_P = "<p style='margin:0 0 12px; line-height:180%'>{}</p>"
+
+def _lines(*lines):
+    """One paragraph; each source line is its own line on screen."""
+    return _P.format("<br>".join(lines))
+
+
+_LI = "&nbsp;&nbsp;・<b style='color:#e6eff8'>{}</b>：{}"
 
 ABOUT_HTML = (
     "<div style='font-size:28px; font-weight:700; color:#e6eff8'>Sax Cover Studio</div>"
     "<div style='font-size:16px; font-weight:700; color:#32d4ce; margin:4px 0 16px'>"
     "專為薩克斯風愛好者打造，讓每一次 Cover 都更簡單、更精彩！</div>"
-    + _P.format("對許多學習薩克斯風的朋友來說，隨著演奏技巧逐漸成熟，總會開始想要記錄自己的吹奏成果。不論是錄製影片、純音訊，或是搭配伴奏製作一首完整的 Saxophone Cover，都是學習過程中充滿成就感的一件事。")
-    + _P.format("然而，當真正開始動手錄製時，才發現事情並沒有想像中簡單。")
-    + _P.format("從錄音設備、攝影器材、伴奏播放，到錄音軟體、影片編輯與後製混音，往往需要同時操作好幾套軟硬體工具。光是架設環境、調整設定，就可能花掉大半時間，更別說還得反覆摸索適合自己的錄音方式。")
-    + _P.format("原本只是想開心地吹奏一首曲子，最後卻變成一場與設備和軟體的奮戰。")
-    + _P.format("<b style='color:#e6eff8'>這正是 Sax Cover Studio 想要解決的問題。</b>")
+    + _lines("對許多學習薩克斯風的朋友來說，隨著演奏技巧逐漸成熟，總會開始想要記錄自己的吹奏成果。",
+             "不論是錄製影片、純音訊，或是搭配伴奏製作一首完整的 Saxophone Cover，都是學習過程中充滿成就感的一件事。",
+             "然而，當真正開始動手錄製時，才發現事情並沒有想像中簡單。",
+             "從錄音設備、攝影器材、伴奏播放，到錄音軟體、影片編輯與後製混音，往往需要同時操作好幾套軟硬體工具。",
+             "光是架設環境、調整設定，就可能花掉大半時間，更別說還得反覆摸索適合自己的錄音方式。",
+             "原本只是想開心地吹奏一首曲子，最後卻變成一場與設備和軟體的奮戰。",
+             "<b style='color:#e6eff8'>這正是 Sax Cover Studio 想要解決的問題。</b>")
     + _H2.format("讓錄製與混音回歸簡單，專注享受演奏的樂趣")
-    + _P.format("Sax Cover Studio 是一套專為薩克斯風翻奏（Saxophone Cover）設計的錄製與混音工具，將錄音、伴奏整合、音訊調整及成品輸出集中在同一個工作環境中。")
-    + _P.format("所有處理都在自己的電腦上完成，讓你不必在不同軟體之間反覆切換，就能更輕鬆地完成自己的 Cover 作品。")
+    + _lines("Sax Cover Studio 是一套專為薩克斯風翻奏（Saxophone Cover）設計的錄製與混音工具",
+             "將錄音、伴奏整合、音訊調整及成品輸出集中在同一個工作環境中。",
+             "讓你不必在不同軟體之間反覆切換，就能更輕鬆地完成自己的 Cover 作品。")
     + _H2.format("既有影片，也能重新混音、賦予新生命")
-    + _P.format("過去錄製完成的演奏影片，如果覺得樂器與伴奏的音量不夠平衡，或是想讓聲音表現更加理想，不一定需要重新錄製。")
-    + _P.format("只要保留原始演奏影片與伴奏音檔，就能透過 Sax Cover Studio 重新整合、編輯與混音。")
-    + _P.format("你可以重新調整樂器和伴奏之間的音量比例，進一步修飾音色、空間感與聲音動態，讓原本的作品呈現更符合自己期待的聽覺效果。")
+    + _lines("過去錄製完成的演奏影片，如果覺得樂器與伴奏的音量不夠平衡",
+             "或是想讓聲音表現更加理想，不一定需要重新錄製。",
+             "只要保留原始演奏影片與伴奏音檔，就能透過 Sax Cover Studio 重新整合、編輯與混音。",
+             "你可以重新調整樂器和伴奏之間的音量比例，進一步修飾音色、空間感與聲音動態",
+             "讓原本的作品呈現更符合自己期待的聽覺效果。")
     + _H2.format("分軌錄音，讓每個聲音都能獨立調整")
-    + _P.format("在錄音模式下，Sax Cover Studio 採用分軌錄製的方式，讓演奏與伴奏各自獨立。")
-    + _P.format("當你戴上耳機，跟著伴奏音樂吹奏時，麥克風收錄的薩克斯風聲音會獨立記錄在演奏音軌中，不會直接與伴奏混合。")
-    + _P.format("錄製完成後，就能針對演奏軌與伴奏軌進行個別調整，包括：")
-    + "<ul style='margin:0 0 10px'>"
-      "<li><b style='color:#e6eff8'>Volume（音量）</b>：調整演奏與伴奏的音量平衡。</li>"
-      "<li><b style='color:#e6eff8'>EQ（等化器）</b>：修飾音色，讓薩克斯風的聲音更加自然、清晰。</li>"
-      "<li><b style='color:#e6eff8'>Reverb（殘響）</b>：營造適當的空間感，讓演奏更有氛圍。</li>"
-      "<li><b style='color:#e6eff8'>Compressor（動態壓縮）</b>：控制音量起伏，讓整體聲音更加穩定。</li>"
-      "</ul>"
-    + _P.format("完成混音後，再將演奏與伴奏整合輸出，製作出屬於自己的 Cover 作品。")
+    + _lines("在錄音模式下，Sax Cover Studio 採用分軌錄製的方式，讓演奏與伴奏各自獨立。",
+             "當你戴上耳機，跟著伴奏音樂吹奏時",
+             "麥克風收錄的薩克斯風聲音會獨立記錄在演奏音軌中，不會直接與伴奏混合。",
+             "錄製完成後，就能針對演奏軌與伴奏軌進行個別調整，包括：",
+             _LI.format("Volume（音量）", "調整演奏與伴奏的音量平衡。"),
+             _LI.format("EQ（等化器）", "修飾音色，讓薩克斯風的聲音更加自然、清晰。"),
+             _LI.format("Reverb（殘響）", "營造適當的空間感，讓演奏更有氛圍。"),
+             _LI.format("Compressor（動態壓縮）", "控制音量起伏，讓整體聲音更加穩定。"),
+             "完成混音後，再將演奏與伴奏整合輸出，製作出屬於自己的 Cover 作品。")
     + _H2.format("把時間留給音樂，而不是繁瑣的設定")
-    + _P.format("Sax Cover Studio 並不是要取代專業錄音室或功能繁多的音訊工作站，而是希望提供薩克斯風愛好者一個更直覺、更容易上手的創作環境。")
-    + _P.format("不需要為了錄製一首曲子而學習好幾套複雜軟體，也不必每次都從繁瑣的設定開始。")
-    + _P.format("讓錄製更簡單、混音更自由，讓每一首 Cover 都更接近你心中理想的聲音。")
+    + _lines("Sax Cover Studio 並不是要取代專業錄音室或功能繁多的音訊工作站",
+             "而是希望提供薩克斯風愛好者一個更直覺、更容易上手的創作環境。",
+             "不需要為了錄製一首曲子而學習好幾套複雜軟體，也不必每次都從繁瑣的設定開始。")
+    + _lines("讓錄製更簡單、混音更自由，讓每一首 Cover 都更接近你心中理想的聲音。")
     + "<p style='margin:14px 0; padding:12px; background-color:#17333a; text-align:center; "
       "font-size:16px; font-weight:700; color:#e6eff8'>Sax Cover Studio — 專注演奏，輕鬆完成你的 Sax Cover。</p>"
 )

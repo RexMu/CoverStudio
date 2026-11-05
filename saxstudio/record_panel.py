@@ -341,10 +341,10 @@ class RecordPanel(W.QFrame):
         self.done_label.setWordWrap(True)
         box.addWidget(self.done_label)
         buttons = W.QHBoxLayout()
-        play = W.QPushButton("▶  播放混音")
-        play.setObjectName("primary")
-        play.clicked.connect(self.play_requested.emit)
-        buttons.addWidget(play)
+        self.play_button = W.QPushButton("▶  播放混音")
+        self.play_button.setObjectName("primary")
+        self.play_button.clicked.connect(self.play_requested.emit)
+        buttons.addWidget(self.play_button)
         self.rerecord_button = W.QPushButton("重錄（取代整段）")
         self.rerecord_button.setToolTip("伴奏、EQ／壓縮／混響、音量與延遲校正都保留，只換掉錄音")
         self.rerecord_button.clicked.connect(self.record_requested.emit)
@@ -358,15 +358,15 @@ class RecordPanel(W.QFrame):
         self.punch_button.setToolTip("起點＝播放頭位置（點下方時間軸移動）。起點前 3 秒先播伴奏與目前錄音，"
                                      "到起點開始錄；按停止或伴奏播完結束，起點之後換成新錄音。")
         self.punch_button.clicked.connect(self.punch_requested.emit)
-        box.addWidget(self.punch_button)
-        undo_row = W.QHBoxLayout()
+        punch_row = W.QHBoxLayout()
+        punch_row.addWidget(self.punch_button, 3)
         self.undo_punch_button = W.QPushButton("↶  復原上一次重錄")
         self.undo_punch_button.clicked.connect(self.undo_punch_requested.emit)
-        undo_row.addWidget(self.undo_punch_button, 1)
+        punch_row.addWidget(self.undo_punch_button, 2)
+        box.addLayout(punch_row)
         self.undo_hint = W.QLabel("")
         self.undo_hint.setObjectName("muted")
-        undo_row.addWidget(self.undo_hint)
-        box.addLayout(undo_row)
+        box.addWidget(self.undo_hint)
         self.punch_hint = W.QLabel("點下方時間軸設定重錄起點；起點前 3 秒會先播伴奏與目前錄音讓你銜接。")
         self.punch_hint.setObjectName("muted")
         self.punch_hint.setWordWrap(True)
@@ -495,6 +495,9 @@ class RecordPanel(W.QFrame):
         self.undo_hint.setVisible(bool(punches))
         self.undo_hint.setText(f"可連續復原 {punches} 次")
         self.set_state("done")
+
+    def set_playing(self, playing):
+        self.play_button.setText("Ⅱ  暫停" if playing else "▶  播放混音")
 
     def set_target(self, index, name, color, monitors=None):
         """Show the record target when the project has more than one track."""

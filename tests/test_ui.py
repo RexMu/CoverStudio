@@ -466,9 +466,9 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.10")
+        self.assertEqual(VERSION_LABEL, "Beta V0.11")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
-        self.assertIn("Beta V0.10", self.window.windowTitle())
+        self.assertIn("Beta V0.11", self.window.windowTitle())
         sheet = style_sheet()
         self.assertNotIn("@UP@", sheet)
         for name in ("spin-up.png", "spin-up-disabled.png", "spin-down.png", "spin-down-disabled.png"):
@@ -634,6 +634,30 @@ with TemporaryDirectory() as config:
         panel.fold_hint.click()
         self.assertFalse(panel.fold_body.isHidden())
         self.assertIn("點擊收合", panel.fold_hint.text())
+
+    def test_full_rerecord_trashes_the_old_takes(self):
+        from saxstudio.recorder import TakeResult
+        w = self.window
+        with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(self.padded_backing), "")):
+            w.new_record_project()
+        self.wait_job()
+        first = self.make_take()
+        w.finish_recording(TakeResult(str(first), 3.0, 48000, 1.0, .5))
+        self.wait_job()
+        second = self.root/"第二次錄音.wav"
+        second.write_bytes(first.read_bytes())
+        with patch.object(QtCore.QFile, "moveToTrash", return_value=True) as trash:
+            w.finish_recording(TakeResult(str(second), 3.0, 48000, 1.0, .5))
+            self.wait_job()
+        trash.assert_called_once_with(str(first))
+        self.assertEqual(w.project.recording, str(second))
+
+    def test_panel_play_button_follows_playback(self):
+        panel = self.window.record_panel
+        panel.set_playing(True)
+        self.assertIn("暫停", panel.play_button.text())
+        self.window.pause()
+        self.assertIn("播放混音", panel.play_button.text())
 
     def test_new_project_dialog_routes_to_mode(self):
         from saxstudio.record_panel import NewProjectDialog

@@ -23,6 +23,10 @@ def asset_path(name):
 
 
 def application_icon():
+    if sys.platform == "darwin":
+        # The .ico tops out at 256 px; on macOS it would replace the bundle's
+        # 1024 px .icns in the Dock and look blurry on Retina screens.
+        return QtGui.QIcon(str(asset_path("app-icon.png")))
     icon = QtGui.QIcon(str(asset_path("app-icon.ico")))
     if icon.isNull():
         icon = QtGui.QIcon(str(asset_path("app-icon.png")))

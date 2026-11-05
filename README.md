@@ -1,9 +1,17 @@
 # Sax Cover Studio — 薩克斯風影片混音工作室（Windows 11／macOS Apple Silicon）
 
-**Beta V0.10** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
+**Beta V0.11** · 作者：Rex Mu | RexFactory。所有影音處理都在本機執行。繁體中文 Qt 桌面介面，採用 FFmpeg 進行解碼、音效與輸出。
 **本次已驗證 Linux 的音訊／剪輯引擎與 Qt5 介面。新版 Qt6／Win11 播放、工作列圖示與 EXE 安裝仍需實機驗證；此交付包為原始碼，不包含預先建置的 Windows EXE。**
 
 ![實際介面，使用合成影音測試素材](docs/ui-screenshot.png)
+
+## Beta V0.11 更新
+
+- **回放裝置**：錄音模式的播放改走錄音設定的「耳機輸出」（例如 AG03），裝置拔除時自動改回系統預設。
+- **整段重錄**：新錄音完成後，這一軌舊的錄音、合成檔與重錄片段會移到垃圾桶（可救回）。
+- 錄音面板的「播放混音」播放時變成「暫停」；「從 xx:xx 重錄到結尾」與「復原上一次重錄」放在同一行。
+- 首頁換成新的薩克斯風照片（暗色／米黃亮色），靠左裁切；功能說明「介紹」依新排版整理。
+- Mac：Dock 圖示改用高解析度圖檔，不再模糊。
 
 ## Beta V0.10 更新
 
@@ -171,7 +179,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1 -Installer
    第一次需要網路（下載 Python 套件與 FFmpeg）。腳本會依序：建立 `.venv-mac`、安裝套件、下載並驗證 FFmpeg、執行功能測試、產生圖示、打包並做 ad-hoc 簽章、製作 dmg。
 3. 輸出：
    - `dist/Sax Cover Studio.app`
-   - `dist/SaxCoverStudio-BetaV0.10-macOS-AppleSilicon.dmg`
+   - `dist/SaxCoverStudio-BetaV0.11-macOS-AppleSilicon.dmg`
 4. 安裝：打開 dmg，把 App 拖到「應用程式」。**第一次開啟請在 App 上按右鍵 →「打開」**（App 沒有 Apple 開發者簽章與公證，直接雙擊會被 Gatekeeper 擋下）。若仍被擋，到「系統設定 → 隱私權與安全性」按「仍要打開」。
 
 FFmpeg 相關：

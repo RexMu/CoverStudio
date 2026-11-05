@@ -1,3 +1,14 @@
+# Sax Cover Studio Beta V0.11
+
+以 Beta V0.10 為基礎。
+
+- `MainWindow.apply_playback_device()`：錄音模式回放用錄音設定的輸出裝置，`QMediaDevices.audioOutputsChanged` 時找不到就改回預設。
+- 整段重錄（第一軌與其他軌）成功後以 `QFile.moveToTrash` 移除該軌舊檔（`track_files()`）。
+- 錄音面板 `play_button`／`set_playing()`；重錄與復原按鈕同列。
+- `WelcomeView` 靠左裁切、換圖；`ABOUT_HTML` 改為逐行排版；macOS 的 `application_icon()` 用 PNG。
+
+---
+
 # Sax Cover Studio Beta V0.10
 
 以 Beta V0.9 為基礎。

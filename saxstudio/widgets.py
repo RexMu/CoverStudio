@@ -109,9 +109,10 @@ class WelcomeView(QtWidgets.QWidget):
         p.setClipPath(clip)
         pix = self.pixmap()
         if not pix.isNull():
-            # Cover: fill the area, crop the overflow, keep the centre.
+            # Cover: fill the area and crop the overflow. Anchored left so the
+            # player and saxophone stay whole; the right side is cut first.
             scaled = pix.scaled(rect.size(), QtCore.Qt.KeepAspectRatioByExpanding, QtCore.Qt.SmoothTransformation)
-            x = (scaled.width() - rect.width()) // 2
+            x = 0
             y = (scaled.height() - rect.height()) // 2
             p.drawPixmap(rect, scaled, QtCore.QRect(x, y, rect.width(), rect.height()))
         else:
