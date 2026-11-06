@@ -76,6 +76,17 @@ jobs:
             choco install innosetup -y --no-progress
           }
 
+      - name: 檢查 PowerShell 腳本語法（Windows PowerShell 5.1）
+        shell: powershell
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem scripts\*.ps1) {
+            $errs = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs) | Out-Null
+            foreach ($e in $errs) { Write-Host "::error file=$($f.Name)::$($e.Extent.StartLineNumber): $($e.Message)"; $bad++ }
+          }
+          if ($bad) { exit 1 }
+
       - name: 功能測試（失敗時把錯誤寫進摘要）
         shell: pwsh
         run: |

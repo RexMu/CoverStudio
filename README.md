@@ -134,6 +134,10 @@ Qt 的影片預覽與 FFmpeg 的匯出是不同解碼路徑；特殊編碼可能
 
 ## Windows 11 建置與執行
 
+**一鍵設定（建議）**：雙擊 `setup-windows.cmd`。會用 winget 安裝 Git、Python 3.12、Inno Setup 6，下載 FFmpeg 到 `tools/`（含授權與 `BUILD.txt`），建立 `.venv` 並安裝套件；可重複執行。還沒有專案資料夾時，把 `setup-windows.cmd` 與 `scripts/setup-windows.ps1` 放在同一個資料夾執行，會下載到「文件\CoverStudio」。設定好後雙擊 `build-windows.cmd`（可攜版）或 `build-installer.cmd`（安裝檔）。
+
+手動設定：
+
 1. 安裝 **Python 3.12，64 位元**（含 Python Launcher `py`）。
 2. 從 [FFmpeg 官方下載頁](https://ffmpeg.org/download.html#build-windows) 選擇 **7.1 或更新版** 的 Windows 64 位元完整 static build。
 3. 將 `ffmpeg.exe`、`ffprobe.exe` 放進 `tools/`，並保留該版本授權／來源資料；詳見 [tools/README.md](tools/README.md)。

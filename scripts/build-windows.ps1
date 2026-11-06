@@ -59,6 +59,7 @@ if ($Installer) {
         & $SaxIscc.Source installer\SaxCoverStudio.iss
     } else {
         $SaxIsccPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+        if (-not (Test-Path $SaxIsccPath)) { $SaxIsccPath = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" }
         if (-not (Test-Path $SaxIsccPath)) { throw '請先安裝 Inno Setup 6，或省略 -Installer 建置可攜版。' }
         & $SaxIsccPath installer\SaxCoverStudio.iss
     }
