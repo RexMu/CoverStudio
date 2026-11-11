@@ -77,11 +77,11 @@ class UITests(unittest.TestCase):
 
     def wait_job(self):
         deadline = time.monotonic()+30
-        while self.window.busy and time.monotonic() < deadline:
+        while (self.window.busy or self.window.preview_job is not None) and time.monotonic() < deadline:
             self.app.processEvents()
             time.sleep(.01)
         self.app.processEvents()
-        self.assertFalse(self.window.busy, "background operation did not finish")
+        self.assertFalse(self.window.busy or self.window.preview_job is not None, "background operation did not finish")
         self.assertEqual(self.errors, [])
 
     def import_video(self, name="長片"):
@@ -101,7 +101,8 @@ class UITests(unittest.TestCase):
         w.volume_fields[1][0].setValue(-9)
         w.bands[1][1].setValue(-3)
         w.prepare_preview(False)
-        self.assertFalse(w.limiter.isEnabled())
+        self.assertIsNotNone(w.preview_job)        # renders in the background...
+        self.assertTrue(w.limiter.isEnabled())     # ...without locking the controls
         self.wait_job()
         self.assertFalse(w.preview_dirty)
         self.assertTrue(Path(w.preview_path).is_file())
@@ -466,7 +467,7 @@ with TemporaryDirectory() as config:
         from saxstudio import AUTHOR, VERSION_LABEL
         from saxstudio.app import style_sheet
         from saxstudio.branding import StartupSplash, asset_path
-        self.assertEqual(VERSION_LABEL, "Beta V0.11")
+        self.assertEqual(VERSION_LABEL, "Beta V0.12")
         self.assertEqual(AUTHOR, "Rex Mu | RexFactory")
         self.assertIn("Beta V0.11", self.window.windowTitle())
         sheet = style_sheet()
@@ -615,6 +616,80 @@ with TemporaryDirectory() as config:
         self.assertEqual(w.project.tracks, [])
         self.assertTrue(w.track_tabs.isHidden())
         self.assertEqual(w.selected_track, 0)
+
+    def record_project_with_take(self):
+        from saxstudio.recorder import TakeResult
+        w = self.window
+        with patch.object(QtWidgets.QFileDialog, "getOpenFileName", return_value=(str(self.padded_backing), "")):
+            w.new_record_project()
+        self.wait_job()
+        w.finish_recording(TakeResult(str(self.make_take()), 3.0, 48000, 1.0, .5))
+        self.wait_job()
+        return w
+
+    def test_auto_update_is_off_by_default_and_remembered(self):
+        w = self.window
+        self.assertFalse(w.auto_update.isChecked())
+        w.auto_update.setChecked(True)
+        self.assertEqual(str(QtCore.QSettings("SaxStudio", "SaxStudio").value("preview/auto_update")).lower(), "true")
+        w.auto_update.setChecked(False)
+        self.assertEqual(str(QtCore.QSettings("SaxStudio", "SaxStudio").value("preview/auto_update")).lower(), "false")
+
+    def test_changing_while_listening_waits_for_play_then_resumes_in_place(self):
+        w = self.record_project_with_take()
+        self.assertFalse(w.auto_update.isChecked())
+        w.playing = True
+        w.position = 1.5
+        w.mark_dirty(audio=True)
+        self.assertFalse(w.playing)
+        self.assertFalse(w.resume_timer.isActive())          # nothing renders by itself
+        self.assertIsNone(w.preview_job)
+        self.assertTrue(w.preview_dirty)
+        self.assertIn("按播放更新", w.preview_label.text())
+        w.toggle_play()                                      # now render, then continue here
+        self.assertIsNotNone(w.preview_job)
+        self.assertTrue(w.controls.isEnabled())              # the window is not locked
+        self.wait_job()
+        self.assertFalse(w.preview_dirty)
+        self.assertTrue(w.pending_play)
+        self.assertAlmostEqual(w.pending_position, 1.5, places=3)
+
+    def test_auto_update_rerenders_after_a_pause_and_a_newer_change_cancels_the_old_render(self):
+        w = self.record_project_with_take()
+        w.auto_update.setChecked(True)
+        w.playing = True
+        w.position = 2.0
+        w.mark_dirty(audio=True)
+        self.assertTrue(w.resume_after_render)
+        self.assertTrue(w.resume_timer.isActive())
+        w.resume_timer.stop()
+        w.resume_render()
+        self.assertIsNotNone(w.preview_job)
+        self.assertTrue(w.render_play)
+        first = w.preview_job
+        w.mark_dirty(audio=True)                             # a newer change arrives mid-render
+        self.assertTrue(first.cancel.is_set())
+        w.resume_timer.stop()
+        w.resume_render()
+        self.wait_job()
+        self.assertFalse(w.preview_dirty)                    # the newest settings were rendered
+        self.assertTrue(w.pending_play)
+        self.assertAlmostEqual(w.pending_position, 2.0, places=3)
+        w.auto_update.setChecked(False)
+
+    def test_stems_button_exports_dry_tracks_with_and_without_backing(self):
+        w = self.record_project_with_take()
+        self.assertTrue(w.stems_button.isVisible())
+        self.assertTrue(w.stems_button.isEnabled())
+        out = self.root/"stems-ui"
+        with patch.object(QtWidgets.QDialog, "exec", return_value=True), \
+                patch.object(QtWidgets.QFileDialog, "getExistingDirectory", return_value=str(out)):
+            w.export_stems_dialog()
+        self.wait_job()
+        folder = out/"前後靜音伴奏-分軌"
+        self.assertEqual(sorted(f.name for f in folder.iterdir()), ["00-伴奏.wav", "01-Alto.wav"])
+        self.window.show_error = self.errors.append
+        self.assertEqual(self.errors, [])
 
     def test_start_screen_shows_welcome_picture_and_demo_waves(self):
         w = self.window

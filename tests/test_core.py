@@ -10,7 +10,7 @@ from scipy import signal
 from scipy.io import wavfile
 
 from saxstudio.alignment import align_samples
-from saxstudio.engine import LIMIT, export, impulse, render_mix
+from saxstudio.engine import LIMIT, export, export_stems, impulse, render_mix
 from saxstudio.media import Cancelled, active_range, binary, decode_mono, probe, run
 from saxstudio.model import Clip, Project
 
@@ -214,6 +214,50 @@ class MediaTests(unittest.TestCase):
         render_mix(p, out)
         _, data = wavfile.read(out)
         self.assertLess(np.max(abs(data)), .001)
+
+    def test_dry_stems_are_untouched_aligned_and_cut(self):
+        from saxstudio.model import Track
+        rate = 48000
+        burst = np.zeros(rate * 3, np.float32)
+        burst[rate:2 * rate] = .25
+        wavfile.write(self.root/"乾聲二.wav", rate, burst)
+        p = Project(mode="record", recording=str(self.root/"原音.wav"), backing=str(self.root/"伴奏.wav"),
+                    duration=4, clips=[Clip(0, 4)], offset=.5, video_db=-12, video_pan=-1.0)
+        p.effects.eq_enabled = p.effects.compressor_enabled = p.effects.reverb_enabled = True
+        p.effects.limiter_enabled = True
+        p.tracks.append(Track(name="Ten:or", recording=str(self.root/"乾聲二.wav"), duration=3,
+                              backing_offset=.3, pan=1.0, db=-20, muted=True))
+        out = Path(export_stems(p, self.root/"分軌"/"伴奏-分軌", True))
+        self.assertEqual(out.name, "伴奏-分軌")
+        self.assertEqual(sorted(f.name for f in out.iterdir()), ["00-伴奏.wav", "01-Alto.wav", "02-Ten_or.wav"])
+        self.assertFalse([f for f in out.parent.iterdir() if f.name.startswith(".")])   # no leftovers
+        first = run([binary("ffprobe"), "-v", "error", "-show_streams", "-of", "json", str(out/"01-Alto.wav")])
+        stream = __import__("json").loads(first)["streams"][0]
+        self.assertEqual((stream["channels"], stream["sample_rate"], stream["codec_name"]),
+                         (1, "48000", "pcm_s24le"))
+        _, alto = wavfile.read(out/"01-Alto.wav")
+        _, tenor = wavfile.read(out/"02-Ten_or.wav")
+        _, back = wavfile.read(out/"00-伴奏.wav")
+        self.assertEqual(len(alto), rate*4)
+        self.assertEqual(len(tenor), rate*4)
+        self.assertEqual(len(back), rate*4)
+        # Dry: no volume (-12 dB), pan, limiter or effects; level equals the source (24-bit
+        # is read left-justified in 32 bits).
+        self.assertAlmostEqual(np.max(abs(alto.astype(np.float64)))/2**31, .12, delta=.005)
+        # The second track keeps its timeline position (1.0 s + 0.5 - 0.3 = 1.2 s), unmuted and unpanned.
+        loud = np.flatnonzero(abs(tenor.astype(np.float64)) > np.max(abs(tenor.astype(np.float64)))*.5)
+        self.assertAlmostEqual(loud[0]/rate, 1.2, delta=.01)
+        # The backing is shifted by the offset: silent before 0.5 + its own 0.25 s lead-in.
+        self.assertLess(np.max(abs(back[:int(rate*.7)].astype(np.float64))), 1000)
+        # Time edits are applied: keep 0-1 and 2-4 -> 3 s.
+        p.clips = [Clip(0, 1), Clip(2, 4)]
+        cut = Path(export_stems(p, self.root/"分軌"/"伴奏-分軌", False))
+        self.assertEqual(cut.name, "伴奏-分軌 (2)")        # never overwrites an earlier export
+        self.assertEqual(sorted(f.name for f in cut.iterdir()), ["01-Alto.wav", "02-Ten_or.wav"])
+        _, trimmed = wavfile.read(cut/"01-Alto.wav")
+        self.assertEqual(len(trimmed), rate*3)
+        with self.assertRaises(ValueError):
+            export_stems(Project(video=str(self.video), duration=4, clips=[Clip(0, 4)]), self.root/"x", True)
 
     def test_nonoverlapping_backing_is_silent(self):
         p = self.project()

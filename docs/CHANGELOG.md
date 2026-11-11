@@ -1,3 +1,14 @@
+# Sax Cover Studio Beta V0.12
+
+以 Beta V0.11 為基礎。
+
+- 預覽改為背景重算：`MainWindow.start_render()`／`render_done()`／`render_failed()`／`render_finished()`，不再用 `busy` 鎖住介面；`change_count`（`preview_dirty` 為 property，每次變髒就加一）讓過時的結果被丟棄並在需要時重算；`launch()` 前先 `cancel_preview()`。
+- `auto_update`（設定 `preview/auto_update`，預設關）：關閉時播放中改設定只暫停（`render_play` 清除），按播放後重算並從 `position` 續播；開啟時沿用 600 ms 去抖動的 `resume_render()`。
+- `engine.export_stems()`／`stem_plan()`／`dry_stem()`：每軌（單聲道）與伴奏（立體聲）各一個 48 kHz／24 bit WAV，只做位移、補長、剪輯；先寫入暫存資料夾再改名。標題列 `stems_button` 與 `export_stems_dialog()`。
+- `PUNCH_COLORS` 最後一色由 `#e6e9ef` 改為 `#ff4fd8`。
+
+---
+
 # Sax Cover Studio Beta V0.11
 
 以 Beta V0.10 為基礎。

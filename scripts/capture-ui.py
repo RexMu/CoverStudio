@@ -39,11 +39,11 @@ def main():
 
     def wait():
         limit = time.monotonic()+30
-        while w.busy and time.monotonic() < limit:
+        while (w.busy or w.preview_job is not None) and time.monotonic() < limit:
             app.processEvents()
             time.sleep(.01)
         app.processEvents()
-        if errors or w.busy:
+        if errors or w.busy or w.preview_job is not None:
             raise RuntimeError(errors or "UI worker timeout")
 
     with tempfile.TemporaryDirectory(prefix="sax-ui-capture-") as tmp:

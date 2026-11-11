@@ -63,7 +63,7 @@ class EQGraph(QtWidgets.QWidget):
 # separate high-contrast palette containing none of those, starting at a
 # different place per track; repeats after six are fine.
 TRACK_COLORS = ("#27c9c3", "#ff8a3d", "#a77bff")
-PUNCH_COLORS = ("#ff6fae", "#7bd88f", "#5aa9ff", "#f25f5c", "#d4e36b", "#e6e9ef")
+PUNCH_COLORS = ("#ff6fae", "#7bd88f", "#5aa9ff", "#f25f5c", "#d4e36b", "#ff4fd8")
 
 
 def take_color(number, track=0):

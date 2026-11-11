@@ -156,6 +156,89 @@ def render_mix(project: Project, output, cancel=None, progress=None):
     return str(output)
 
 
+def dry_stem(path, destination, shift, duration, clips, mono, cancel=None):
+    """One untouched stem: shifted onto the project timeline, cut to the kept
+    clips, 48 kHz / 24-bit. No effects, volume, pan or limiter."""
+    info = probe(path, cancel)
+    if not info["audio"]:
+        raise ValueError("檔案沒有音訊")
+    channels = int(info["audio"].get("channels") or 1)
+    chain = ["asetpts=PTS-STARTPTS", f"aresample={RATE}"]
+    if mono and channels > 1:
+        # Equal-weight downmix (the recorder normally writes mono already).
+        chain.append("pan=mono|c0=" + "+".join(f"{1/channels:.6f}*c{i}" for i in range(channels)))
+    elif not mono:
+        chain.append("aformat=channel_layouts=stereo")
+    chain += [shift_filter(shift), "apad", f"atrim=duration={duration:.9f}", "asetpts=PTS-STARTPTS"]
+    n = len(clips)
+    filters = ["[0:a:0]" + ",".join(chain) + "[full]"]
+    if n == 1:
+        c = clips[0]
+        filters.append(f"[full]atrim=start={c.start:.9f}:end={c.end:.9f},asetpts=PTS-STARTPTS[out]")
+    else:
+        filters.append(f"[full]asplit={n}" + "".join(f"[s{i}]" for i in range(n)))
+        for i, c in enumerate(clips):
+            filters.append(f"[s{i}]atrim=start={c.start:.9f}:end={c.end:.9f},asetpts=PTS-STARTPTS[c{i}]")
+        filters.append("".join(f"[c{i}]" for i in range(n)) + f"concat=n={n}:v=0:a=1[out]")
+    args = [binary("ffmpeg"), "-v", "error", "-y", "-i", str(path), "-filter_complex", ";".join(filters),
+            "-map", "[out]", "-ar", str(RATE), "-c:a", "pcm_s24le", "-f", "wav", str(destination)]
+    try:
+        run(args, cancel)
+    except BaseException:
+        Path(destination).unlink(missing_ok=True)
+        raise
+
+
+def stem_plan(project: Project, include_backing=True):
+    """[(file name, source path, shift, mono)] for the dry-stem export."""
+    from .storage import safe_stem
+    plan = []
+    if include_backing and project.backing:
+        plan.append(("00-伴奏.wav", project.backing, project.offset, False))
+    for k in range(project.track_count):
+        track = project.track(k)
+        if track.recording and track.duration > 0:
+            name = safe_stem(track.name or f"音軌{k + 1}", 30)
+            shift = project.track_shift(k) if k else None   # track 1: origin of its own file
+            plan.append((f"{k + 1:02}-{name}.wav", track.recording, shift, True))
+    return plan
+
+
+def export_stems(project: Project, folder, include_backing=True, cancel=None, progress=None):
+    """Write each recording (and optionally the backing) as its own dry WAV.
+
+    The stems share start and length, so they line up when dropped into any
+    DAW. Time edits (cuts) are applied; EQ, compression, reverb, volume, pan,
+    mute and the limiter are not. Returns the folder actually written.
+    """
+    project.validate()
+    if not project.is_record:
+        raise ValueError("分軌乾聲只能在錄音模式匯出")
+    if not project.clips:
+        raise ValueError("沒有保留片段，無法匯出")
+    plan = stem_plan(project, include_backing)
+    if not [p for p in plan if not p[0].startswith("00-")]:
+        raise ValueError("還沒有錄音，沒有可匯出的乾聲")
+    from .storage import unique_path
+    folder = Path(folder)
+    final = unique_path(folder.parent, folder.name, "")
+    final.parent.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix=".sax-stems-", dir=final.parent))
+    try:
+        for n, (name, path, shift, mono) in enumerate(plan, start=1):
+            if progress:
+                progress(f"正在輸出乾聲 {n}/{len(plan)}：{name}")
+            if shift is None:
+                shift = audio_origin(probe(path, cancel))
+            dry_stem(path, work / name, shift, project.duration, project.clips, mono, cancel)
+        work.rename(final)
+    except BaseException:
+        import shutil
+        shutil.rmtree(work, ignore_errors=True)
+        raise
+    return str(final)
+
+
 def export(project: Project, destination, cancel=None, progress=None):
     project.validate()
     destination = Path(destination)

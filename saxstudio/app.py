@@ -14,7 +14,7 @@ from .effect_panels import CollapsibleEffect, PresetBar
 from .help_dialog import HelpDialog
 from .help_text import COMP_HELP, EQ_HELP, PRESETS, REVB_HELP
 from .alignment import align_files
-from .engine import audio_origin, export, render_mix
+from .engine import audio_origin, export, export_stems, render_mix, stem_plan
 from . import recorder, storage
 from .media import active_range, decode_mono, decode_stereo, probe, thumbnail, waveform
 from .model import MAX_TRACKS, TRACK_NAMES, Clip, Effects, Project, Punch, PunchUndo, Track
@@ -159,13 +159,27 @@ def pan_text(pan):
 
 
 class MainWindow(W.QMainWindow):
+    @property
+    def preview_dirty(self):
+        return self._preview_dirty
+
+    @preview_dirty.setter
+    def preview_dirty(self, value):
+        self._preview_dirty = bool(value)
+        if value:
+            self.change_count += 1
+
     def __init__(self):
         super().__init__()
         self.project = Project()
         self.project_path = None
         self.dirty = False
+        self.change_count = 0       # bumped on every change that outdates the preview
         self.preview_dirty = True
         self.preview_path = ""
+        self.preview_job = None     # background render of the preview (does not lock the UI)
+        self.render_play = False    # start playing when the running render finishes
+        self.render_again = False   # re-render once the (outdated) running render stops
         self.loading = False
         self.busy = False
         self.job = None
@@ -257,6 +271,10 @@ class MainWindow(W.QMainWindow):
         self.theme_button = button("", self.toggle_theme)
         self.theme_button.setObjectName("themeButton")
         header.addWidget(self.theme_button)
+        self.stems_button = button("匯出分軌乾聲", self.export_stems_dialog)
+        self.stems_button.setToolTip("每軌錄音各存成一個沒有任何效果的 WAV，方便丟進慣用的混音軟體")
+        self.stems_button.hide()
+        header.addWidget(self.stems_button)
         self.export_button = button("匯出影片 / 音訊", self.export_dialog, True)
         header.addWidget(self.export_button)
         layout.addLayout(header)
@@ -525,6 +543,12 @@ class MainWindow(W.QMainWindow):
         transport.addWidget(self.stop_button)
         self.preview_button = button("更新音效預覽", lambda: self.prepare_preview(False))
         transport.addWidget(self.preview_button)
+        self.auto_update = W.QCheckBox("調整時自動更新")
+        self.auto_update.setToolTip("關閉（預設）：播放中調整音效會暫停，改好後按播放才重算並從原位置繼續。\n"
+                                    "開啟：調整停下來約 0.6 秒後自動重算並接著播放；調整過程中仍可繼續操作。")
+        self.auto_update.setChecked(str(self.settings.value("preview/auto_update", "false")).lower() == "true")
+        self.auto_update.toggled.connect(lambda on: self.settings.setValue("preview/auto_update", on))
+        transport.addWidget(self.auto_update)
         self.time_label = W.QLabel("原片時間 00:00.000")
         transport.addWidget(self.time_label)
         transport.addStretch()
@@ -1054,20 +1078,35 @@ class MainWindow(W.QMainWindow):
     def mark_dirty(self, audio=False):
         self.dirty = True
         if audio:
-            was_playing = self.playing or self.pending_play
+            was_playing = self.playing or self.pending_play or (self.preview_job is not None and self.render_play)
             self.pause()
             self.preview_dirty = True
             self.preview_label.setText("音效已變更 · 按播放更新")
+            if self.preview_job is not None:
+                self.preview_job.cancel.set()   # it renders the old settings
             if was_playing and not self.recording_active:
-                # Changed while listening: re-render, then continue from here.
-                # Debounced so dragging a slider renders once, after it settles.
-                self.resume_after_render = True
-                self.resume_timer.start()
+                if self.auto_update.isChecked():
+                    # Changed while listening: re-render, then continue from here.
+                    # Debounced so dragging a slider renders once, after it settles.
+                    self.preview_label.setText("音效已變更 · 稍後自動更新")
+                    self.resume_after_render = True
+                    self.resume_timer.start()
+                else:
+                    self.render_play = False    # wait for the user to press play
         self.setWindowTitle(f"{APP_NAME} {VERSION_LABEL} · 未儲存")
+
+    def cancel_preview(self):
+        job = self.preview_job
+        if job is not None:
+            job.cancel.set()
+            self.preview_job = None
+            self.render_play = False
+            self.render_again = False
 
     def launch(self, function, callback):
         if self.busy:
             return
+        self.cancel_preview()
         self.pause()
         self.busy = True
         self.controls.setEnabled(False)
@@ -1183,6 +1222,7 @@ class MainWindow(W.QMainWindow):
         self.pan_button.setVisible(rec)
         self.add_track_button.setVisible(rec)
         self.export_button.setText("匯出音訊（WAV / MP3）" if rec else "匯出影片 / 音訊")
+        self.stems_button.setVisible(rec)
         self.timeline.empty_text = ("匯入伴奏後開始錄音，波形會顯示在這裡" if rec else
                                     "匯入影片與伴奏後，波形會顯示在這裡")
         if not self.recording_active:
@@ -1947,47 +1987,96 @@ class MainWindow(W.QMainWindow):
     def prepare_preview(self, autoplay=False):
         if self.busy or self.recording_active or not self.project.source:
             return
+        if autoplay:
+            self.render_play = True
         if not self.preview_dirty and self.preview_path:
             if autoplay:
+                self.render_play = False
                 self.start_play()
             return
+        job = self.preview_job
+        if job is not None:
+            if job.stamp != self.change_count:
+                self.render_again = True    # outdated: stop it, then start over
+                job.cancel.set()
+            return
+        self.start_render()
+
+    def start_render(self):
+        """Render the preview mix in the background; the window stays usable."""
         snapshot = copy.deepcopy(self.project)
-        # Loading the new preview resets the player to 0; resume where we were.
-        resume_at = self.position
+        self.pause()
         self.preview_revision += 1
+        self.render_again = False
         output = Path(self.temp.name) / f"preview-{self.preview_revision}.wav"
         def task(cancel, progress):
             render_mix(snapshot, output, cancel, progress)
-            progress("正在建立輸出電平資訊…")
             # Peak envelope for a visual indicator, not a calibrated loudness meter.
             samples = decode_mono(output, rate=8000, cancel=cancel)
             n = 400
             padded = np.pad(samples, (0, (-len(samples)) % n))
             peaks = np.max(np.abs(padded.reshape(-1, n)), axis=1)
             return str(output), peaks
-        def done(result):
-            old = self.preview_path
-            self.preview_path, self.preview_peaks = result
-            source(self.audio_player, self.preview_path)
-            self.seek(resume_at)
-            if old:
-                try:
-                    Path(old).unlink(missing_ok=True)
-                except PermissionError:
-                    pass
-            self.preview_dirty = False
-            self.preview_label.setText("音效預覽已更新")
-            self.statusBar().showMessage("預覽已就緒，音效與輸出使用相同處理流程")
-            if autoplay or self.resume_after_render:
-                # Media loading is asynchronous; wait for both media to be loaded.
-                self.pending_play = True
-                self.pending_since = QtCore.QDateTime.currentMSecsSinceEpoch()
-                # The player may still report position 0 for the new file after
-                # this; start_play seeks here again once the media is loaded.
-                self.pending_position = resume_at
-            self.resume_after_render = False
-        self.pending_play = False
-        self.launch(task, done)
+        job = Worker(task, self)
+        job.stamp = self.change_count
+        job.result.connect(lambda result, j=job: self.render_done(j, result))
+        job.failed.connect(lambda text, j=job: self.render_failed(j, text))
+        job.finished.connect(lambda j=job: self.render_finished(j))
+        self.preview_job = job
+        self.preview_label.setText("正在更新音效…" + ("（完成後自動播放）" if self.render_play else ""))
+        self.busy_bar.show()
+        job.start()
+
+    def render_done(self, job, result):
+        path, peaks = result
+        stale = (job is not self.preview_job or job.cancel.is_set() or job.stamp != self.change_count
+                 or self.busy or self.recording_active)
+        if stale:
+            Path(path).unlink(missing_ok=True)   # changed meanwhile; finished() renders again
+            return
+        old = self.preview_path
+        self.preview_path, self.preview_peaks = path, peaks
+        resume_at = self.position          # where the playhead is now, not when the render began
+        source(self.audio_player, path)    # loading resets the player to 0
+        self.seek(resume_at)
+        if old:
+            try:
+                Path(old).unlink(missing_ok=True)
+            except PermissionError:
+                pass
+        self.preview_dirty = False
+        self.preview_label.setText("音效預覽已更新")
+        self.statusBar().showMessage("預覽已就緒，音效與輸出使用相同處理流程")
+        if self.render_play:
+            # Media loading is asynchronous; wait for both media to be loaded.
+            self.render_play = False
+            self.pending_play = True
+            self.pending_since = QtCore.QDateTime.currentMSecsSinceEpoch()
+            # The player may still report position 0 for the new file after
+            # this; start_play seeks here again once the media is loaded.
+            self.pending_position = resume_at
+
+    def render_failed(self, job, text):
+        if job is not self.preview_job or job.cancel.is_set():
+            return
+        self.render_play = False
+        self.preview_label.setText("音效更新失敗")
+        self.show_error(text)
+
+    def render_finished(self, job):
+        job.deleteLater()
+        if job is not self.preview_job:
+            return
+        self.preview_job = None
+        if not self.busy:
+            self.busy_bar.hide()
+        if (self.preview_dirty and (self.render_play or self.render_again) and not self.busy
+                and not self.recording_active and not self.resume_timer.isActive()):
+            self.start_render()
+        elif self.preview_dirty:
+            self.render_again = False
+            if self.preview_label.text().startswith("正在更新"):
+                self.preview_label.setText("音效已變更 · 按播放更新")
 
     def resume_render(self):
         """Re-render after a change made while playing, then keep playing."""
@@ -1997,6 +2086,8 @@ class MainWindow(W.QMainWindow):
         if self.busy:
             self.resume_timer.start()   # another job is running; try again shortly
             return
+        self.resume_after_render = False
+        self.render_play = True
         self.prepare_preview(False)
 
     def toggle_play(self):
@@ -2006,6 +2097,12 @@ class MainWindow(W.QMainWindow):
             # Pressing play/pause while a resume is queued: the user takes over.
             self.resume_after_render = False
             self.resume_timer.stop()
+            self.preview_label.setText("音效已變更 · 按播放更新")
+            return
+        if self.preview_job is not None:
+            # A render is running: play/pause decides whether to start afterwards.
+            self.render_play = not self.render_play
+            self.preview_label.setText("正在更新音效…" + ("（完成後自動播放）" if self.render_play else ""))
             return
         if self.playing:
             self.pause()
@@ -2047,6 +2144,7 @@ class MainWindow(W.QMainWindow):
     def stop(self):
         self.resume_after_render = False
         self.resume_timer.stop()
+        self.render_play = False
         if self.busy:
             return
         self.pause()
@@ -2237,6 +2335,7 @@ class MainWindow(W.QMainWindow):
         self.align_button.setEnabled(not rec and has and bool(self.project.backing) and idle)
         self.autotrim_button.setEnabled(has and bool(self.project.backing) and bool(self.backing_range) and idle)
         self.export_button.setEnabled(has and bool(self.project.clips) and idle)
+        self.stems_button.setEnabled(has and bool(self.project.clips) and idle)
         self.play_button.setEnabled(has and bool(self.project.clips) and idle)
         self.stop_button.setEnabled(idle)
         self.preview_button.setEnabled(has and idle)
@@ -2395,6 +2494,42 @@ class MainWindow(W.QMainWindow):
         self.launch(lambda cancel, progress: export(snapshot, destination, cancel, progress),
                     lambda output: self.statusBar().showMessage(f"匯出完成：{output}"))
 
+    def export_stems_dialog(self):
+        p = self.project
+        if self.busy or self.recording_active or not p.is_record or not p.source or not p.clips:
+            return
+        dialog = W.QDialog(self)
+        dialog.setWindowTitle("匯出分軌乾聲")
+        layout = W.QVBoxLayout(dialog)
+        intro = W.QLabel("每一軌錄音各存成一個單聲道 WAV（48 kHz / 24 bit），\n"
+                         "不含 EQ、壓縮、混響、音量、聲像與限幅器；\n"
+                         "已套用重錄結果與時間剪輯，所有檔案起點與長度一致，丟進混音軟體即可對齊。")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        with_backing = W.QCheckBox("一併匯出伴奏（00-伴奏.wav，立體聲）")
+        with_backing.setChecked(bool(p.backing))
+        with_backing.setEnabled(bool(p.backing))
+        layout.addWidget(with_backing)
+        names = [name for name, *_ in stem_plan(p, True) if not name.startswith("00-")]
+        layout.addWidget(W.QLabel("將輸出：" + "、".join(names)))
+        buttons = W.QDialogButtonBox(W.QDialogButtonBox.Ok | W.QDialogButtonBox.Cancel)
+        buttons.button(W.QDialogButtonBox.Ok).setText("選擇資料夾並匯出")
+        buttons.button(W.QDialogButtonBox.Cancel).setText("取消")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if not (dialog.exec() if QT6 else dialog.exec_()):
+            return
+        start = str(Path(p.folder) if p.folder else Path(p.recording).parent)
+        parent = W.QFileDialog.getExistingDirectory(self, "選擇存放分軌資料夾的位置", start)
+        if not parent:
+            return
+        folder = Path(parent) / f"{storage.safe_stem(p.backing)}-分軌"
+        include = with_backing.isChecked()
+        snapshot = copy.deepcopy(p)
+        self.launch(lambda cancel, progress: export_stems(snapshot, folder, include, cancel, progress),
+                    lambda output: self.statusBar().showMessage(f"分軌乾聲匯出完成：{output}"))
+
     def closeEvent(self, event):
         if self.recording_active:
             self.statusBar().showMessage("請先停止錄音再關閉")
@@ -2408,6 +2543,11 @@ class MainWindow(W.QMainWindow):
             event.ignore()
             return
         self.pause()
+        job = self.preview_job
+        if job is not None:
+            self.preview_job = None
+            job.cancel.set()
+            job.wait(5000)
         if self.session is not None:
             self.session.cancel()
             self.session.close_input()
