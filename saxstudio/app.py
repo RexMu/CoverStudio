@@ -75,7 +75,7 @@ QLabel#modeBadge { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0
 QPushButton#editButton { background: #17333a; border: 1px solid #24bdb9; font-weight: 700; }
 QPushButton#editButton:hover { background: #1d4249; }
 QPushButton#themeButton { border-radius: 16px; padding: 7px 14px; }
-QSplitter::handle { background: transparent; }
+QSplitter::handle { background: #1a2a3b; margin: 6px 2px; border-radius: 2px; }
 QSplitter::handle:hover { background: #2ac5bf; }
 QToolButton#section { background: transparent; border: none; font-weight: 600; padding: 4px 2px; text-align: left; }
 QToolButton#section:hover { color: #32d4ce; }

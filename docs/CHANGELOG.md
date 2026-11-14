@@ -1,3 +1,13 @@
+# Sax Cover Studio Beta V0.13
+
+以 Beta V0.12 為基礎。
+
+- `STYLE`：`QWidget` 背景改為透明，`QMainWindow` 用 `qradialgradient`，對話框等頂層視窗另設底色；卡片、按鈕、凹槽用 `qlineargradient` 加上下不同顏色的邊框。新增的顏色都加進 `theme.LIGHT_MAP`。
+- 標題列 `QFrame#headerBar`（原本兩列合併）；`iconButton`、`cta` 樣式；`theme_button` 只顯示圖示，文字在提示。
+- `scripts/capture-skin.py` 與 `.github/workflows/ui-capture.yml`：在 Windows 上實際畫出暗色／亮色截圖，推到 `ui-shots` 分支。
+
+---
+
 # Sax Cover Studio Beta V0.12
 
 以 Beta V0.11 為基礎。
