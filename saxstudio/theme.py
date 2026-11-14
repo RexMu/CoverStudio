@@ -51,6 +51,12 @@ LIGHT_MAP = {
     "#0a121d": "#efe5cf", "#0d1724": "#f8f1e0", "#1a2a3b": "#dccfae", "#050c14": "#c9b88f", "#25384e": "#fffaf0",
     "#ff6f64": "#e0574c", "#d6433a": "#b8362c", "#ff9a91": "#f08a80", "#9e2a23": "#8f2a22",
     "#ff8177": "#ea6a5f", "#e0463c": "#c23e33", "#c7d4e0": "#e0d3b8",
+    # multi-track and punch-in colours, record-panel boxes (deeper on cream for contrast)
+    "#ff8a3d": "#d9691c", "#a77bff": "#7a4fd6", "#ff6fae": "#d6408a", "#7bd88f": "#3f9a55",
+    "#5aa9ff": "#2f78d0", "#f25f5c": "#c43d3a", "#d4e36b": "#8a9a1c", "#ff4fd8": "#c02aa6",
+    "#2a1a10": "#fff1e4", "#3b2414": "#ffe6cf", "#ffd2ad": "#9a4a10", "#6f5a4a": "#b8a68f", "#4a3a2e": "#e0d0bc",
+    "#1c2430": "#f1e7d0", "#dbe6f0": "#3a3428", "#75ded5": "#0e8f8a", "#3a2a12": "#fff3d9", "#4a3616": "#ffe9bf",
+    "#ffd88a": "#8a5a06", "#7f6a45": "#b8a67f", "#5a4a2a": "#e0d3b8", "#1a2230": "#fff8ec",
 }
 
 _current = DARK

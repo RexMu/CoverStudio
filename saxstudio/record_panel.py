@@ -352,7 +352,7 @@ class RecordPanel(W.QFrame):
         box.addLayout(buttons)
         self.punch_button = W.QPushButton("●  從 00:00.0 重錄到結尾")
         self.punch_button.setObjectName("punch")
-        theme.apply(self.punch_button, "QPushButton#punch { background: #3a2a12; border: 1px solid #e9b853; "
+        theme.apply(self.punch_button, "QPushButton#punch { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4a3616, stop:1 #3a2a12); border: 1px solid #e9b853; "
                                        "color: #ffd88a; font-weight: 600; padding: 8px; border-radius: 6px; }"
                                        "QPushButton#punch:disabled { color: #7f6a45; border-color: #5a4a2a; }")
         self.punch_button.setToolTip("起點＝播放頭位置（點下方時間軸移動）。起點前 3 秒先播伴奏與目前錄音，"

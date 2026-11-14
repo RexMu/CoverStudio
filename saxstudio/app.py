@@ -498,7 +498,7 @@ class MainWindow(W.QMainWindow):
         align_row = W.QHBoxLayout()
         self.add_track_button = button("＋ 新增錄音軌", self.add_track)
         self.add_track_button.setObjectName("addTrack")
-        theme.apply(self.add_track_button, "QPushButton#addTrack { background: #2a1a10; border: 1px solid #ff8a3d; "
+        theme.apply(self.add_track_button, "QPushButton#addTrack { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3b2414, stop:1 #2a1a10); border: 1px solid #ff8a3d; "
                                            "color: #ffd2ad; font-weight: 600; }"
                                            "QPushButton#addTrack:disabled { color: #6f5a4a; border-color: #4a3a2e; background: #1c2430; }")
         align_row.addWidget(self.add_track_button)
