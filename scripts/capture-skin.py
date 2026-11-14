@@ -38,6 +38,7 @@ def main():
             wavfile.write(root/name, rate, x.astype(np.float32))
             return str(root/name)
         for name in (theme.DARK, theme.LIGHT):
+            QtCore.QSettings("SaxStudio", "SaxStudio").setValue("ui/theme", name)
             theme.set_theme(name)
             app.setPalette(dark_palette())
             with patch("saxstudio.app.source"), patch("saxstudio.recorder.audio_available", return_value=False):

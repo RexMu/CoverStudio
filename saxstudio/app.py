@@ -270,7 +270,7 @@ class MainWindow(W.QMainWindow):
         header_bar.setObjectName("headerBar")
         header = W.QHBoxLayout(header_bar)
         header.setContentsMargins(12, 8, 12, 8)
-        header.setSpacing(8)
+        header.setSpacing(5)
         brand_icon = W.QLabel()
         brand_icon.setPixmap(self.windowIcon().pixmap(36, 36))
         brand_icon.setFixedSize(36, 36)
@@ -287,7 +287,6 @@ class MainWindow(W.QMainWindow):
         theme.apply(version, "color: #32d4ce; font-size: 11px; font-weight: 600;")
         brand.addWidget(version)
         header.addLayout(brand)
-        header.addSpacing(6)
         self.mode_badge = W.QLabel("尚未建立專案")
         self.mode_badge.setObjectName("modeBadge")
         self.mode_badge.setToolTip("模式在開新專案時決定；要換模式請按「新專案」")
@@ -305,7 +304,6 @@ class MainWindow(W.QMainWindow):
         self.pan_button.setToolTip("另開視窗調整各軌左右聲道位置")
         for b in [self.new_button, self.import_back_button, self.open_button, self.save_button, self.pan_button]:
             header.addWidget(b)
-        header.addSpacing(6)
         for text, tip, callback in (("⤢", "重設版面：效果區、影片區與音訊條恢復預設大小", self.reset_layout),
                                     ("?", "功能說明", self.show_help),
                                     ("i", "關於", self.show_about)):
@@ -316,7 +314,6 @@ class MainWindow(W.QMainWindow):
         self.theme_button = button("", self.toggle_theme)
         self.theme_button.setObjectName("iconButton")
         header.addWidget(self.theme_button)
-        header.addSpacing(6)
         self.stems_button = button("匯出乾聲", self.export_stems_dialog)
         self.stems_button.setToolTip("匯出分軌乾聲：每軌錄音各存成一個沒有任何效果的 WAV，方便丟進慣用的混音軟體")
         self.stems_button.hide()
@@ -540,7 +537,7 @@ class MainWindow(W.QMainWindow):
         self.track_names, self.track_hints, self.track_frames = [], [], []
         for index, (label, color, value, hint) in enumerate([
                 ("第一軌 · 影片原音", "#27c9c3", 0, "套用上方 EQ／壓縮／混響"),
-                ("第二軌 · 伴奏", "#e9b853", -6, "只調整音量與位移，不套用音效")]):
+                ("伴奏", "#e9b853", -6, "只調整音量與位移，不套用音效")]):
             row = self.make_track_row(label, color, value, hint, 0 if index == 0 else None)
             track_controls.addWidget(row["frame"], 1)
             self.track_names.append(row["name"])
