@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # CI sets "windows" for real CJK fonts
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
