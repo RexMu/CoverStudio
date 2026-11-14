@@ -190,14 +190,14 @@ class UITests(unittest.TestCase):
         from saxstudio.app import style_sheet
         w = self.window
         self.assertFalse(theme.is_light())
-        self.assertIn("米黃", w.theme_button.text())
+        self.assertIn("米黃", w.theme_button.toolTip())
         w.toggle_theme()
         self.assertTrue(theme.is_light())
         self.assertEqual(QtCore.QSettings("SaxStudio", "SaxStudio").value("ui/theme"), "light")
         self.assertIn("#f5eedc", style_sheet())
         self.assertNotIn("#101923", style_sheet())
         self.assertEqual(theme.c("#101b27"), "#fbf5e6")
-        self.assertIn("暗色", w.theme_button.text())
+        self.assertIn("暗色", w.theme_button.toolTip())
         # A new window starts in the remembered theme.
         other = MainWindow()
         self.assertTrue(theme.is_light())

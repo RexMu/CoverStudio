@@ -33,7 +33,7 @@ QFrame#card, QGroupBox, QFrame#headerBar { background: qlineargradient(x1:0, y1:
 QGroupBox { margin-top: 12px; padding: 12px 10px 8px; font-weight: 600; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
 QLabel { background: transparent; }
-QLabel#title { font-size: 17px; font-weight: 700; }
+QLabel#title { font-size: 15px; font-weight: 700; }
 QLabel#muted { color: #91a4b9; font-size: 12px; }
 QPushButton { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22364c, stop:1 #1a2a3d); border: 1px solid #2b4058; border-top-color: #3a5774; border-bottom-color: #0b141e; border-radius: 7px; padding: 7px 12px; }
 QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2c465f, stop:1 #223851); }
@@ -42,6 +42,7 @@ QPushButton:disabled { color: #617386; background: #15222f; border-color: #1b2b3
 QPushButton#primary, QPushButton#cta { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4fe0d8, stop:1 #22b3ad); color: #06201f; border: 1px solid #128580; border-top-color: #8ff0ea; border-bottom-color: #0e6d69; font-weight: 700; }
 QPushButton#cta { padding: 8px 18px; border-radius: 8px; }
 QPushButton#primary:disabled, QPushButton#cta:disabled { background: #15222f; color: #617386; border-color: #1b2b3d; }
+QFrame#headerBar QPushButton { padding: 6px 9px; }
 QPushButton#iconButton { min-width: 18px; max-width: 18px; padding: 7px 8px; border-radius: 15px; font-weight: 700; }
 QPushButton#primary:hover, QPushButton#cta:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #63e8e0, stop:1 #2bc0b9); }
 QPushButton#danger { color: #ffb5ac; }
@@ -95,6 +96,13 @@ QListWidget::item:selected { background: #25485b; }
 QProgressBar { border: 1px solid #1a2a3b; height: 8px; border-radius: 4px; background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a121d, stop:1 #0d1724); }
 QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4fe0d8, stop:1 #22b3ad); border-radius: 4px; }
 QScrollArea { border: none; }
+QToolButton { background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 1px 4px; }
+QToolButton:hover { background: #2c465f; border-color: #2b4058; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #2b4058; border-radius: 3px; min-height: 24px; min-width: 24px; }
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: #3a5774; }
+QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page { background: transparent; border: none; width: 0; height: 0; }
 QStatusBar { color: #9db0c4; }
 QToolTip { background: #253d51; color: #eff7ff; border: 1px solid #527084; }
 """
@@ -273,7 +281,8 @@ class MainWindow(W.QMainWindow):
         title.setObjectName("title")
         title.setToolTip("薩克斯風影片混音工作室 · 所有影音處理都在本機執行")
         brand.addWidget(title)
-        version = W.QLabel(f"{VERSION_LABEL}  ·  {AUTHOR}")
+        version = W.QLabel(VERSION_LABEL)
+        version.setToolTip(AUTHOR)
         version.setObjectName("version")
         theme.apply(version, "color: #32d4ce; font-size: 11px; font-weight: 600;")
         brand.addWidget(version)
@@ -305,7 +314,7 @@ class MainWindow(W.QMainWindow):
             b.setToolTip(tip)
             header.addWidget(b)
         self.theme_button = button("", self.toggle_theme)
-        self.theme_button.setObjectName("themeButton")
+        self.theme_button.setObjectName("iconButton")
         header.addWidget(self.theme_button)
         header.addSpacing(6)
         self.stems_button = button("匯出乾聲", self.export_stems_dialog)
@@ -707,10 +716,10 @@ class MainWindow(W.QMainWindow):
 
     def update_theme_button(self):
         if theme.is_light():
-            self.theme_button.setText("☾ 暗色")
+            self.theme_button.setText("☾")
             self.theme_button.setToolTip("切換成暗色")
         else:
-            self.theme_button.setText("☀ 米黃")
+            self.theme_button.setText("☀")
             self.theme_button.setToolTip("切換成米黃亮色")
 
     def toggle_theme(self):
