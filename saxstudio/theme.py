@@ -41,6 +41,16 @@ LIGHT_MAP = {
     "#0d393c": "#ffffff", "#e9b853": "#a8710c", "#ff8a7a": "#b2412f", "#ffb5ac": "#b2412f",
     "#d9534f": "#c8453c", "#e8645f": "#d45a50", "#ff5a4f": "#d0473c", "#8fe6de": "#086f6b",
     "#1d4249": "#cfe7e0",
+    # V0.13 depth: gradients (top/bottom stops), bevel edges (top light, bottom dark)
+    "#1a3046": "#fffdf4", "#0e1a28": "#f2e9d4", "#0a121c": "#e9dec4",
+    "#1b2c40": "#fffdf6", "#142232": "#f7efdc", "#22354b": "#e3d6b8", "#2e4862": "#fffefa", "#0b1520": "#d6c6a0",
+    "#22364c": "#fffdf8", "#1a2a3d": "#f1e7d0", "#2b4058": "#d8c9a6", "#3a5774": "#ffffff", "#0b141e": "#c9b88f",
+    "#2c465f": "#ffffff", "#223851": "#f6eedb", "#15222f": "#ece2ca", "#1b2b3d": "#e3d6b8",
+    "#4fe0d8": "#19a8a2", "#22b3ad": "#0b7a76", "#06201f": "#ffffff", "#8ff0ea": "#5cc9c3", "#128580": "#086561",
+    "#0e6d69": "#054b48", "#63e8e0": "#20b5ae", "#2bc0b9": "#0d8580",
+    "#0a121d": "#efe5cf", "#0d1724": "#f8f1e0", "#1a2a3b": "#dccfae", "#050c14": "#c9b88f", "#25384e": "#fffaf0",
+    "#ff6f64": "#e0574c", "#d6433a": "#b8362c", "#ff9a91": "#f08a80", "#9e2a23": "#8f2a22",
+    "#ff8177": "#ea6a5f", "#e0463c": "#c23e33", "#c7d4e0": "#e0d3b8",
 }
 
 _current = DARK

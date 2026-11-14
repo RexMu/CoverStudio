@@ -18,7 +18,7 @@ from .engine import audio_origin, export, export_stems, render_mix, stem_plan
 from . import recorder, storage
 from .media import active_range, decode_mono, decode_stereo, probe, thumbnail, waveform
 from .model import MAX_TRACKS, TRACK_NAMES, Clip, Effects, Project, Punch, PunchUndo, Track
-from .record_panel import CalibrationDialog, NewProjectDialog, PanDialog, RecordPanel
+from .record_panel import CalibrationDialog, ElidedLabel, NewProjectDialog, PanDialog, RecordPanel
 from .qt import QT6, QtCore, QtGui, QtMultimedia, QtWidgets as W, QtMultimediaWidgets, Signal, player, source, state_stopped
 from .widgets import EQGraph, Timeline, WelcomeView, Worker, take_color
 
@@ -26,22 +26,27 @@ VIDEO_FILTER = "影片 (*.mp4 *.mov *.mkv *.avi *.webm);;所有檔案 (*)"
 AUDIO_FILTER = "伴奏 (*.mp3 *.wav *.flac *.m4a *.aac *.ogg);;所有檔案 (*)"
 
 STYLE = """
-QMainWindow, QWidget { background: #101923; color: #e5edf7; font-family: 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei UI', 'Noto Sans CJK TC'; font-size: 13px; }
-QFrame#card, QGroupBox { background: #182635; border: 1px solid #304359; border-radius: 9px; }
+QWidget { background: transparent; color: #e5edf7; font-family: 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei UI', 'Noto Sans CJK TC'; font-size: 13px; }
+QMainWindow { background: qradialgradient(cx:0.3, cy:-0.15, radius:1.1, fx:0.3, fy:-0.15, stop:0 #1a3046, stop:0.55 #0e1a28, stop:1 #0a121c); }
+QDialog, QMessageBox, QMenu, QInputDialog, QFileDialog, QComboBoxPrivateContainer { background: #101923; }
+QFrame#card, QGroupBox, QFrame#headerBar { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1b2c40, stop:1 #142232); border: 1px solid #22354b; border-top-color: #2e4862; border-bottom-color: #0b1520; border-radius: 10px; }
 QGroupBox { margin-top: 12px; padding: 12px 10px 8px; font-weight: 600; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
 QLabel { background: transparent; }
-QLabel#title { font-size: 24px; font-weight: 700; }
+QLabel#title { font-size: 17px; font-weight: 700; }
 QLabel#muted { color: #91a4b9; font-size: 12px; }
-QPushButton { background: #24384c; border: 1px solid #405a73; border-radius: 6px; padding: 8px 12px; }
-QPushButton:hover { background: #304c65; }
-QPushButton:pressed { background: #172f42; }
-QPushButton:disabled { color: #617386; border-color: #293c4e; }
-QPushButton#primary { background: #24bdb9; color: #082b32; border: none; font-weight: 700; }
-QPushButton#primary:hover { background: #41d0ca; }
+QPushButton { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #22364c, stop:1 #1a2a3d); border: 1px solid #2b4058; border-top-color: #3a5774; border-bottom-color: #0b141e; border-radius: 7px; padding: 7px 12px; }
+QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2c465f, stop:1 #223851); }
+QPushButton:pressed { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #15222f, stop:1 #1b2b3d); border-top-color: #0b141e; border-bottom-color: #2b4058; }
+QPushButton:disabled { color: #617386; background: #15222f; border-color: #1b2b3d; }
+QPushButton#primary, QPushButton#cta { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4fe0d8, stop:1 #22b3ad); color: #06201f; border: 1px solid #128580; border-top-color: #8ff0ea; border-bottom-color: #0e6d69; font-weight: 700; }
+QPushButton#cta { padding: 8px 18px; border-radius: 8px; }
+QPushButton#primary:disabled, QPushButton#cta:disabled { background: #15222f; color: #617386; border-color: #1b2b3d; }
+QPushButton#iconButton { min-width: 18px; max-width: 18px; padding: 7px 8px; border-radius: 15px; font-weight: 700; }
+QPushButton#primary:hover, QPushButton#cta:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #63e8e0, stop:1 #2bc0b9); }
 QPushButton#danger { color: #ffb5ac; }
 QPushButton:checked { background: #31546b; border-color: #32d4ce; }
-QDoubleSpinBox, QSpinBox, QComboBox { background: #101d2b; border: 1px solid #3c526b; border-radius: 4px; padding: 2px 4px; min-height: 22px; }
+QDoubleSpinBox, QSpinBox, QComboBox { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a121d, stop:1 #0d1724); border: 1px solid #1a2a3b; border-top-color: #050c14; border-bottom-color: #25384e; border-radius: 5px; padding: 2px 4px; min-height: 22px; }
 QDoubleSpinBox, QSpinBox { padding-right: 18px; }
 QDoubleSpinBox::up-button, QSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 17px; border-left: 1px solid #3c526b; border-top-right-radius: 4px; background: #1a2b3c; }
 QDoubleSpinBox::down-button, QSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 17px; border-left: 1px solid #3c526b; border-top: 1px solid #2c3f53; border-bottom-right-radius: 4px; background: #1a2b3c; }
@@ -59,17 +64,17 @@ QPushButton#preset { padding: 6px 12px; border-radius: 14px; }
 QPushButton#preset:checked { background: #24bdb9; color: #082b32; border-color: #24bdb9; font-weight: 700; }
 QLabel#presetCustom { color: #617386; padding: 0 6px; }
 QLabel#presetCustom:enabled { color: #e9b853; font-weight: 600; }
-QPushButton#record { background: #d9534f; color: #ffffff; border: none; border-radius: 8px; padding: 13px; font-size: 16px; font-weight: 700; }
-QPushButton#record:hover { background: #e8645f; }
+QPushButton#record { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ff6f64, stop:1 #d6433a); color: #ffffff; border: 1px solid #9e2a23; border-top-color: #ff9a91; border-radius: 10px; padding: 13px; font-size: 16px; font-weight: 700; }
+QPushButton#record:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ff8177, stop:1 #e0463c); }
 QPushButton#record:disabled { background: #4a3134; color: #a99; }
 QPushButton#stopRecord { background: #2b3b4d; color: #ffffff; border: 1px solid #ff8a7a; border-radius: 8px; padding: 13px; font-size: 16px; font-weight: 700; }
-QPushButton#modeCard { text-align: left; padding: 16px; background: #182635; border: 1px solid #304359; border-radius: 10px; font-size: 13px; }
+QPushButton#modeCard { text-align: left; padding: 16px; background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1b2c40, stop:1 #142232); border: 1px solid #304359; border-radius: 10px; font-size: 13px; }
 QPushButton#modeCard:checked { background: #17333a; border: 2px solid #32d4ce; }
-QLabel#modeBadge { background: #0f1b27; border: 1px solid #304359; border-radius: 8px; padding: 6px 12px; font-weight: 600; }
+QLabel#modeBadge { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a121d, stop:1 #0d1724); border: 1px solid #1a2a3b; border-top-color: #050c14; border-bottom-color: #25384e; border-radius: 13px; padding: 5px 12px; font-weight: 600; color: #32d4ce; }
 QPushButton#editButton { background: #17333a; border: 1px solid #24bdb9; font-weight: 700; }
 QPushButton#editButton:hover { background: #1d4249; }
 QPushButton#themeButton { border-radius: 16px; padding: 7px 14px; }
-QSplitter::handle { background: #1c2b3a; }
+QSplitter::handle { background: transparent; }
 QSplitter::handle:hover { background: #2ac5bf; }
 QToolButton#section { background: transparent; border: none; font-weight: 600; padding: 4px 2px; text-align: left; }
 QToolButton#section:hover { color: #32d4ce; }
@@ -78,17 +83,17 @@ QToolButton#effectArrow { background: transparent; border: none; color: #b4c5d5;
 QToolButton#effectArrow:hover { background: #2a4054; }
 QWidget#effectBody QLabel:disabled, QWidget#effectBody QDoubleSpinBox:disabled { color: #75889b; }
 QComboBox QAbstractItemView { background: #192d40; selection-background-color: #28646a; }
-QSlider::groove:horizontal { background: #34495f; height: 5px; border-radius: 2px; }
+QSlider::groove:horizontal { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a121d, stop:1 #0d1724); border: 1px solid #050c14; height: 5px; border-radius: 3px; }
 QSlider::sub-page:horizontal { background: #2ac5bf; border-radius: 2px; }
-QSlider::handle:horizontal { background: #dce7f2; width: 13px; margin: -5px 0; border-radius: 6px; }
+QSlider::handle:horizontal { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffffff, stop:1 #c7d4e0); border: 1px solid #0b141e; width: 13px; margin: -6px 0; border-radius: 7px; }
 QCheckBox { background: transparent; spacing: 7px; }
-QCheckBox::indicator { width: 15px; height: 15px; border: 1px solid #567087; border-radius: 4px; background: #0f1d29; }
-QCheckBox::indicator:checked { background: #2ac5bf; border-color: #2ac5bf; }
-QListWidget { background: #111e2a; border: 1px solid #304359; border-radius: 5px; }
+QCheckBox::indicator { width: 15px; height: 15px; border: 1px solid #2b4058; border-top-color: #050c14; border-radius: 4px; background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a121d, stop:1 #0d1724); }
+QCheckBox::indicator:checked { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4fe0d8, stop:1 #22b3ad); border-color: #128580; }
+QListWidget { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a121d, stop:1 #0d1724); border: 1px solid #1a2a3b; border-top-color: #050c14; border-radius: 6px; }
 QListWidget::item { padding: 6px; }
 QListWidget::item:selected { background: #25485b; }
-QProgressBar { border: 1px solid #304359; height: 8px; border-radius: 4px; background: #152330; }
-QProgressBar::chunk { background: #27c9c3; border-radius: 4px; }
+QProgressBar { border: 1px solid #1a2a3b; height: 8px; border-radius: 4px; background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a121d, stop:1 #0d1724); }
+QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #4fe0d8, stop:1 #22b3ad); border-radius: 4px; }
 QScrollArea { border: none; }
 QStatusBar { color: #9db0c4; }
 QToolTip { background: #253d51; color: #eff7ff; border: 1px solid #527084; }
@@ -221,7 +226,7 @@ class MainWindow(W.QMainWindow):
         self.setWindowTitle(f"{APP_NAME} {VERSION_LABEL}")
         self.setWindowIcon(application_icon())
         self.resize(1440, 980)
-        self.setMinimumSize(1120, 800)
+        self.setMinimumSize(1180, 800)
         self.setStyleSheet(style_sheet())
         self.build_ui()
         self.video_player = player(self, self.video_widget, muted=True)
@@ -252,54 +257,65 @@ class MainWindow(W.QMainWindow):
         layout = W.QVBoxLayout(root)
         layout.setContentsMargins(18, 14, 18, 12)
         layout.setSpacing(10)
-        header = W.QHBoxLayout()
+        # One header bar: brand · project · project actions · help/theme · export.
+        header_bar = W.QFrame()
+        header_bar.setObjectName("headerBar")
+        header = W.QHBoxLayout(header_bar)
+        header.setContentsMargins(12, 8, 12, 8)
+        header.setSpacing(8)
         brand_icon = W.QLabel()
-        brand_icon.setPixmap(self.windowIcon().pixmap(44, 44))
-        brand_icon.setFixedSize(44, 44)
+        brand_icon.setPixmap(self.windowIcon().pixmap(36, 36))
+        brand_icon.setFixedSize(36, 36)
         header.addWidget(brand_icon)
+        brand = W.QVBoxLayout()
+        brand.setSpacing(0)
         title = W.QLabel(APP_NAME)
         title.setObjectName("title")
-        header.addWidget(title)
-        label = W.QLabel("薩克斯風影片混音工作室  ·  本機處理")
-        label.setObjectName("muted")
-        header.addWidget(label)
+        title.setToolTip("薩克斯風影片混音工作室 · 所有影音處理都在本機執行")
+        brand.addWidget(title)
         version = W.QLabel(f"{VERSION_LABEL}  ·  {AUTHOR}")
         version.setObjectName("version")
-        theme.apply(version, "color: #32d4ce; font-size: 12px; font-weight: 600; padding-left: 8px;")
-        header.addWidget(version)
-        header.addStretch()
-        self.theme_button = button("", self.toggle_theme)
-        self.theme_button.setObjectName("themeButton")
-        header.addWidget(self.theme_button)
-        self.stems_button = button("匯出分軌乾聲", self.export_stems_dialog)
-        self.stems_button.setToolTip("每軌錄音各存成一個沒有任何效果的 WAV，方便丟進慣用的混音軟體")
-        self.stems_button.hide()
-        header.addWidget(self.stems_button)
-        self.export_button = button("匯出影片 / 音訊", self.export_dialog, True)
-        header.addWidget(self.export_button)
-        layout.addLayout(header)
-        toolbar = W.QHBoxLayout()
+        theme.apply(version, "color: #32d4ce; font-size: 11px; font-weight: 600;")
+        brand.addWidget(version)
+        header.addLayout(brand)
+        header.addSpacing(6)
         self.mode_badge = W.QLabel("尚未建立專案")
         self.mode_badge.setObjectName("modeBadge")
         self.mode_badge.setToolTip("模式在開新專案時決定；要換模式請按「新專案」")
-        toolbar.addWidget(self.mode_badge)
+        header.addWidget(self.mode_badge)
+        self.project_label = ElidedLabel("尚未匯入影片")
+        self.project_label.setObjectName("muted")
+        header.addWidget(self.project_label, 1)
         self.new_button = button("新專案", self.new_project)
         self.import_back_button = button("匯入伴奏", self.import_backing)
-        self.open_button = button("開啟專案", self.open_project)
-        self.save_button = button("儲存專案", self.save_project)
-        self.pan_button = button("🎚 聲道位置…", self.open_pan_dialog)
+        self.open_button = button("開啟", self.open_project)
+        self.open_button.setToolTip("開啟專案")
+        self.save_button = button("儲存", self.save_project)
+        self.save_button.setToolTip("儲存專案")
+        self.pan_button = button("🎚 聲道", self.open_pan_dialog)
         self.pan_button.setToolTip("另開視窗調整各軌左右聲道位置")
         for b in [self.new_button, self.import_back_button, self.open_button, self.save_button, self.pan_button]:
-            toolbar.addWidget(b)
-        self.project_label = W.QLabel("尚未匯入影片")
-        self.project_label.setObjectName("muted")
-        toolbar.addWidget(self.project_label, 1)
-        reset_layout = button("重設版面", self.reset_layout)
-        reset_layout.setToolTip("把效果區、影片區與音訊條恢復為預設大小")
-        toolbar.addWidget(reset_layout)
-        toolbar.addWidget(button("功能說明", self.show_help))
-        toolbar.addWidget(button("關於", self.show_about))
-        layout.addLayout(toolbar)
+            header.addWidget(b)
+        header.addSpacing(6)
+        for text, tip, callback in (("⤢", "重設版面：效果區、影片區與音訊條恢復預設大小", self.reset_layout),
+                                    ("?", "功能說明", self.show_help),
+                                    ("i", "關於", self.show_about)):
+            b = button(text, callback)
+            b.setObjectName("iconButton")
+            b.setToolTip(tip)
+            header.addWidget(b)
+        self.theme_button = button("", self.toggle_theme)
+        self.theme_button.setObjectName("themeButton")
+        header.addWidget(self.theme_button)
+        header.addSpacing(6)
+        self.stems_button = button("匯出乾聲", self.export_stems_dialog)
+        self.stems_button.setToolTip("匯出分軌乾聲：每軌錄音各存成一個沒有任何效果的 WAV，方便丟進慣用的混音軟體")
+        self.stems_button.hide()
+        header.addWidget(self.stems_button)
+        self.export_button = button("匯出影片 / 音訊", self.export_dialog, True)
+        self.export_button.setObjectName("cta")
+        header.addWidget(self.export_button)
+        layout.addWidget(header_bar)
         self.controls = W.QWidget()
         controls_layout = W.QVBoxLayout(self.controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
@@ -691,10 +707,10 @@ class MainWindow(W.QMainWindow):
 
     def update_theme_button(self):
         if theme.is_light():
-            self.theme_button.setText("☾  暗色")
+            self.theme_button.setText("☾ 暗色")
             self.theme_button.setToolTip("切換成暗色")
         else:
-            self.theme_button.setText("☀  米黃亮色")
+            self.theme_button.setText("☀ 米黃")
             self.theme_button.setToolTip("切換成米黃亮色")
 
     def toggle_theme(self):
@@ -1208,9 +1224,9 @@ class MainWindow(W.QMainWindow):
         rec = self.project.is_record
         self.right_stack.setCurrentWidget(self.record_scroll if rec else self.video_section)
         if rec:
-            self.mode_badge.setText("目前模式　● 錄音")
+            self.mode_badge.setText("● 錄音模式")
         elif self.project.video:
-            self.mode_badge.setText("目前模式　▶ 匯入影片")
+            self.mode_badge.setText("▶ 影片模式")
         else:
             self.mode_badge.setText("尚未建立專案")
         self.align_button.setVisible(not rec)
@@ -1221,7 +1237,7 @@ class MainWindow(W.QMainWindow):
         theme.apply(self.fx_title, "color: #27c9c3; font-weight: 600;")
         self.pan_button.setVisible(rec)
         self.add_track_button.setVisible(rec)
-        self.export_button.setText("匯出音訊（WAV / MP3）" if rec else "匯出影片 / 音訊")
+        self.export_button.setText("匯出 WAV / MP3" if rec else "匯出影片 / 音訊")
         self.stems_button.setVisible(rec)
         self.timeline.empty_text = ("匯入伴奏後開始錄音，波形會顯示在這裡" if rec else
                                     "匯入影片與伴奏後，波形會顯示在這裡")

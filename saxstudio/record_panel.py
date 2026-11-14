@@ -168,7 +168,7 @@ class RecordPanel(W.QFrame):
         # ---- settings fold: devices, countdown, headphone volume, latency
         self.fold = W.QFrame()
         self.fold.setObjectName("settingsFold")
-        theme.apply(self.fold, "QFrame#settingsFold { background: #132232; border: 1px solid #2c4156; border-radius: 6px; }")
+        theme.apply(self.fold, "QFrame#settingsFold { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a121d, stop:1 #0d1724); border: 1px solid #1a2a3b; border-top-color: #050c14; border-bottom-color: #25384e; border-radius: 7px; }")
         fold_box = W.QVBoxLayout(self.fold)
         fold_box.setContentsMargins(10, 6, 10, 8)
         fold_box.setSpacing(4)
@@ -275,7 +275,7 @@ class RecordPanel(W.QFrame):
 
         latency = W.QFrame()
         latency.setObjectName("latencyBox")
-        theme.apply(latency, "QFrame#latencyBox { background: #132232; border: 1px solid #2c4156; border-radius: 6px; }")
+        theme.apply(latency, "QFrame#latencyBox { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #0a121d, stop:1 #0d1724); border: 1px solid #1a2a3b; border-top-color: #050c14; border-bottom-color: #25384e; border-radius: 7px; }")
         row = W.QHBoxLayout(latency)
         row.setContentsMargins(10, 6, 10, 6)
         label = W.QLabel("延遲補償")
