@@ -1,0 +1,47 @@
+name: 介面截圖
+
+# 手動：檢查介面外觀用，在 Windows 上實際畫出暗色／亮色的錄音模式畫面。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      QT_QPA_PLATFORM: windows
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: 截圖
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $rel = Invoke-RestMethod https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/latest -Headers @{ Authorization = "Bearer $env:GH_TOKEN" }
+          $asset = $rel.assets | Where-Object { $_.name -match '^ffmpeg-n(\d+)\.(\d+).*-win64-gpl-\d+\.\d+\.zip$' -and [int]$Matches[1] -ge 7 } | Select-Object -First 1
+          Invoke-WebRequest $asset.browser_download_url -OutFile ff.zip
+          Expand-Archive ff.zip -DestinationPath ffdl
+          $bin = (Get-ChildItem ffdl -Directory | Select-Object -First 1).FullName + '\bin'
+          $env:PATH = "$bin;$env:PATH"
+          python -m pip install -q -r requirements.txt
+          python scripts/capture-skin.py skin
+          python scripts/capture-ui.py skin/video-dark.png
+          Copy-Item docs/effects-expanded.png skin/
+      - name: 推到 ui-shots 分支（只保留最新一次）
+        shell: pwsh
+        run: |
+          git config user.name "github-actions"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan ui-shots
+          git rm -rq --cached .
+          git add -f skin/*.png
+          git commit -qm "UI screenshots $env:GITHUB_SHA"
+          git push -f origin ui-shots

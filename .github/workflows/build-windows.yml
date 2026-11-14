@@ -1,0 +1,136 @@
+name: Windows 安裝檔
+
+# 手動：Actions 頁面 → 「Windows 安裝檔」→ Run workflow
+# 自動：push 版本 tag（例如 v0.6）時打包並附加到 GitHub Release
+on:
+  workflow_dispatch:
+    inputs:
+      installer:
+        description: '打包安裝檔（取消勾選＝只跑測試）'
+        type: boolean
+        default: true
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: '1'
+      SAX_REQUIRE_SPLASH: '1'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: 下載 FFmpeg 7.1（BtbN GPL static build）
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          trap { Write-Host "::error::FFmpeg 下載步驟失敗：$_"; exit 1 }
+          # 從 BtbN 的 latest release 挑選 7.x 以上、win64、GPL、非 shared 的 zip（取最新版號）
+          $rel = Invoke-RestMethod https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/latest -Headers @{ Authorization = "Bearer $env:GH_TOKEN" }
+          $asset = $rel.assets |
+            Where-Object { $_.name -match '^ffmpeg-n(\d+)\.(\d+).*-win64-gpl-\d+\.\d+\.zip$' -and [int]$Matches[1] -ge 7 } |
+            Sort-Object { [version]($_.name -replace '^ffmpeg-n(\d+\.\d+).*$','$1') } -Descending |
+            Select-Object -First 1
+          if (-not $asset) { throw "找不到合適的 FFmpeg 檔案。可用：$($rel.assets.name -join ', ')" }
+          $env:FFMPEG_ZIP = $asset.name
+          $env:FFMPEG_URL = $asset.browser_download_url
+          Write-Host "使用 $env:FFMPEG_URL"
+          Invoke-WebRequest $env:FFMPEG_URL -OutFile $env:FFMPEG_ZIP
+          $sha = (Get-FileHash $env:FFMPEG_ZIP -Algorithm SHA256).Hash
+          Expand-Archive $env:FFMPEG_ZIP -DestinationPath ffmpeg-dl
+          $root = Get-ChildItem ffmpeg-dl -Directory | Select-Object -First 1
+          Copy-Item "$($root.FullName)\bin\ffmpeg.exe" tools\
+          Copy-Item "$($root.FullName)\bin\ffprobe.exe" tools\
+          New-Item -ItemType Directory -Force tools\licenses | Out-Null
+          Copy-Item "$($root.FullName)\LICENSE.txt" tools\licenses\FFmpeg-LICENSE.txt
+          $ver = (& .\tools\ffmpeg.exe -version | Select-Object -First 1)
+          @(
+            '供應者：BtbN/FFmpeg-Builds（GPL static build，含 libx264）'
+            "版本：$ver"
+            "下載位置：$env:FFMPEG_URL"
+            "SHA256（zip）：$sha"
+            '原始碼：https://github.com/BtbN/FFmpeg-Builds 與 https://ffmpeg.org/download.html'
+            "建置：GitHub Actions run $env:GITHUB_RUN_ID（commit $env:GITHUB_SHA）"
+          ) | Set-Content tools\licenses\BUILD.txt -Encoding utf8
+          Get-Content tools\licenses\BUILD.txt
+
+      - name: 準備 Inno Setup
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.installer }}
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and
+              -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: 檢查 PowerShell 腳本語法（Windows PowerShell 5.1）
+        shell: powershell
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem scripts\*.ps1) {
+            $errs = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs) | Out-Null
+            foreach ($e in $errs) { Write-Host "::error file=$($f.Name)::$($e.Extent.StartLineNumber): $($e.Message)"; $bad++ }
+          }
+          if ($bad) { exit 1 }
+
+      - name: 功能測試（失敗時把錯誤寫進摘要）
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -q -r requirements.txt
+          Copy-Item tools\ffmpeg.exe, tools\ffprobe.exe .venv\Scripts\
+          .\.venv\Scripts\python.exe -m unittest discover -s tests 2> test-output.txt
+          $code = $LASTEXITCODE
+          Get-Content test-output.txt
+          if ($code -ne 0) {
+            $text = (Get-Content test-output.txt -Raw) -replace '%','%25' -replace "`r",'' -replace "`n",'%0A'
+            if ($text.Length -gt 6000) { $text = $text.Substring($text.Length - 6000) }
+            Write-Host "::error title=測試失敗::$text"
+            exit 1
+          }
+
+      - name: 打包安裝檔
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.installer }}
+        shell: pwsh
+        run: |
+          try { .\scripts\build-windows.ps1 -Installer }
+          catch { Write-Host "::error::打包失敗：$_"; exit 1 }
+
+      - name: 上傳開機畫面（檢查字型用）
+        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.installer) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-splash
+          path: build/splash/boot-splash.png
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: 上傳安裝檔
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.installer }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: SaxCoverStudio-Windows-Setup
+          path: dist/installer/*.exe
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: 附加到 Release（僅 tag）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/installer/*.exe
+          prerelease: true
